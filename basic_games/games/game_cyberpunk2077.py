@@ -393,62 +393,72 @@ class Cyberpunk2077Game(BasicGame):
             for path in Path(folder.absolutePath()).glob(f"**/*.{ext}")
         ]
 
-    def settings(self) -> list[mobase.PluginSetting]:
+    def settings(self) -> list[mobase.Setting]:
         return [
-            mobase.PluginSetting(
+            mobase.Setting(
                 "skipStartScreen",
-                (
+                self.tr("Skip start screen"),
+                self.tr(
                     'Skips the "Breaching..." start screen on game launch'
                     " (can also skip loading of GOG rewards)"
                 ),
                 False,
             ),
-            mobase.PluginSetting(
+            mobase.Setting(
                 "enforce_archive_load_order",
-                (
+                self.tr("Enforce archive load order"),
+                self.tr(
                     "Enforce the current load order via"
                     " <code>archive/pc/mod/modlist.txt</code>"
                 ),
                 False,
             ),
-            mobase.PluginSetting(
+            mobase.Setting(
                 "reverse_archive_load_order",
-                (
+                self.tr("Reverse archive load order"),
+                self.tr(
                     "Reverse MOs load order in"
                     " <code>archive/pc/mod/modlist.txt</code>"
                     " (first loaded mod wins = last one / highest prio in MO)"
                 ),
                 False,
             ),
-            mobase.PluginSetting(
+            mobase.Setting(
                 "enforce_redmod_load_order",
-                "Enforce the current load order on redmod deployment",
+                self.tr("Enforce RedMod load order"),
+                self.tr("Enforce the current load order on redmod deployment"),
                 True,
             ),
-            mobase.PluginSetting(
+            mobase.Setting(
                 "reverse_redmod_load_order",
-                (
+                self.tr("Reverse RedMod load order"),
+                self.tr(
                     "Reverse MOs load order on redmod deployment"
                     " (first loaded mod wins = last one / highest prio in MO)"
                 ),
                 False,
             ),
-            mobase.PluginSetting(
+            mobase.Setting(
                 "auto_deploy_redmod",
-                "Deploy redmod before game launch if necessary",
+                self.tr("Auto deploy RedMod"),
+                self.tr("Deploy redmod before game launch if necessary"),
                 True,
             ),
-            mobase.PluginSetting(
+            mobase.Setting(
                 "clear_cache_after_game_update",
-                (
+                self.tr("Clear cache after game update"),
+                self.tr(
                     'Clears "overwrite/r6/cache/*" if the original game files changed'
                     " (after update)"
                 ),
                 True,
             ),
-            mobase.PluginSetting(
+            mobase.Setting(
                 "configure_RootBuilder",
-                "Configures RootBuilder for Cyberpunk if installed and enabled",
+                self.tr("Configure RootBuilder"),
+                self.tr(
+                    "Configures RootBuilder for Cyberpunk if installed and enabled"
+                ),
                 True,
             ),
         ]
