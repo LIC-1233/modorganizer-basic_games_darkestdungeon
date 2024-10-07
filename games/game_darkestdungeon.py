@@ -115,11 +115,26 @@ class DarkestDungeonModDataChecker(mobase.ModDataChecker):
         self, filetree: mobase.IFileTree
     ) -> mobase.ModDataChecker.CheckReturn:
         for entry in filetree:
+            if entry.name().casefold() in self.invalidFileNames:
+                return mobase.ModDataChecker.FIXABLE
+        for entry in filetree:
             if not entry.isDir():
                 continue
             if entry.name().casefold() in self.validDirNames:
                 return mobase.ModDataChecker.VALID
         return mobase.ModDataChecker.INVALID
+    
+    def fix(self, filetree: mobase.IFileTree) -> mobase.IFileTree:
+        id = random.randint(1,99999)
+        for entry in list(filetree):
+            if entry.name().casefold() == "project.xml":
+                filetree.move(entry, f"project_file/{id}.xml")
+            if entry.name().casefold() == "preview_icon.png":
+                filetree.move(entry, f"preview_file/{id}.png")
+            if entry.name().casefold() == "modfiles.txt":
+                entry.detach()
+        return filetree
+                
 
 
 class DarkestDungeonModDataContent(mobase.ModDataContent):
