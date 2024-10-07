@@ -340,7 +340,7 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
             if not Path(scr).exists():
                 return ""
             if Path(dst).exists():
-                return copy_local_mod(scr, dst + "_copy")  # type: ignore
+                return copy_local_mod(scr, f"{dst}_copy")  # type: ignore
             else:
                 shutil.copytree(scr, dst)
                 return dst
@@ -350,7 +350,7 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
             find_games()["262060"].parent.parent / "workshop" / "appworkshop_262060.acf"
         )
         workshop_items = acf_parser(str(acf_path))["AppWorkshop"]["WorkshopItemDetails"]
-        qInfo("found " + str(len(workshop_items)) + " items in workshop.")
+        qInfo(f"found {str(len(workshop_items))} items in workshop.")
         modlist = self._organizer.modList()
         mod_root_folder = Path(self._organizer.modsPath())
         mod_names = modlist.allMods()
@@ -450,7 +450,7 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
                 if preview_file.exists():
                     (mo_mod_folder / "preview_file").mkdir(exist_ok=True)
                     preview_file.rename(
-                        mo_mod_folder / "preview_file" / (PublishedFileId + ".png")
+                        mo_mod_folder / "preview_file" / f"{PublishedFileId}.png"
                     )
                 if txt_file.exists():
                     txt_file.unlink()
@@ -459,12 +459,12 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
                 (mo_mod_folder / "project_file").mkdir(exist_ok=True)
                 if xml_file.exists():
                     xml_file.rename(
-                        mo_mod_folder / "project_file" / (PublishedFileId + ".xml")
+                        mo_mod_folder / "project_file" / f"{PublishedFileId}.xml"
                     )
                     open(
                         mo_mod_folder
                         / "project_file"
-                        / ("w" + PublishedFileId + ".manifest"),
+                        / f"w{PublishedFileId}.manifest",
                         "w+",
                     ).write(workshop_items[PublishedFileId]["manifest"])
             else:
@@ -481,15 +481,14 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
             old_manifest_file = (
                 Path(mo_workshop_PublishedFileId[PublishedFileId].absolutePath())
                 / "project_file"
-                / ("w" + PublishedFileId + ".manifest")
+                / f"w{PublishedFileId}.manifest"
             )
             old_manifest = (
                 old_manifest_file.read_text() if old_manifest_file.exists() else ""
             )
             if not old_manifest:
                 qInfo(
-                    mo_workshop_PublishedFileId[PublishedFileId].name()
-                    + " manifest is empty"
+                    f"{mo_workshop_PublishedFileId[PublishedFileId].name()} manifest is empty"
                 )
             if new_manifest != old_manifest:
                 mo_workshop_PublishedFileId[PublishedFileId].setNewestVersion(
@@ -518,7 +517,7 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
                 mod_title = copy_local_mod(xml_file.parent, mo_mod_folder)
                 mo_mod_folder = mod_root_folder / mod_title
                 qInfo(f"Added mod {ascii(xml_file.parent.name)}")
-                (local_mod_folder / ("l" + id + ".manifest")).write_text("")
+                (local_mod_folder / f"l{id}.manifest").write_text("")
             else:
                 continue
 
@@ -527,14 +526,14 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
             xml_file = mo_mod_folder / "project.xml"
             if preview_file.exists():
                 (mo_mod_folder / "preview_file").mkdir(exist_ok=True)
-                preview_file.rename(mo_mod_folder / "preview_file" / (id + ".png"))
+                preview_file.rename(mo_mod_folder / "preview_file" / f"{id}.png")
             if txt_file.exists():
                 txt_file.unlink()
             (mo_mod_folder / "project_file").mkdir(exist_ok=True)
             if xml_file.exists():
-                xml_file.rename(xml_file.parent / "project_file" / (id + ".xml"))
+                xml_file.rename(xml_file.parent / "project_file" / f"{id}.xml")
                 open(
-                    xml_file.parent / "project_file" / ("l" + id + ".manifest"), "w+"
+                    xml_file.parent / "project_file" / f"l{id}.manifest", "w+"
                 ).write("")
 
     def mappings(self) -> List[mobase.Mapping]:
