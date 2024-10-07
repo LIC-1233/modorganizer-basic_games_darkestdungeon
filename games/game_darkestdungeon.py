@@ -15,8 +15,17 @@ from ..basic_game import BasicGame, BasicGameSaveGame
 from ..steam_utils import find_games, find_steam_path
 
 
-class xml_data:
+def try_read_text(file_path: Path) -> str:
+    encodings_to_try = ["gbk", "utf-8", "iso-8859-1"]
+    for encoding in encodings_to_try:
+        try:
+            return file_path.read_text(encoding=encoding)
+        except UnicodeDecodeError:
+            continue
+    raise ValueError(f"Unable to decode {file_path} with known encodings.")
 
+
+class xml_data:
     mod_title: str
     mod_versions: List[int]
     mod_tags: List[str]
@@ -157,12 +166,12 @@ class DarkestDungeonModDataContent(mobase.ModDataContent):
     def getAllContents(self) -> list[mobase.ModDataContent.Content]:
         contents: List[mobase.ModDataContent.Content] = []
         icons = [i for i in Path(self.modPath).glob("*/preview_file/*.png")]
-        for icon, index in zip(icons, range(1, 1 + len(icons)),strict=True):
+        for icon, index in zip(icons, range(1, 1 + len(icons)), strict=True):
             pass
             self.modIdMap[icon.parent.parent.name] = index
             contents.append(mobase.ModDataContent.Content(index, "缩略图", str(icon)))
         icons = [i for i in Path(self.modPath).glob("*/preview_icon.png")]
-        for icon, index in zip(icons, range(1, 1 + len(icons)),strict=True):
+        for icon, index in zip(icons, range(1, 1 + len(icons)), strict=True):
             pass
             self.modIdMap[icon.parent.name] = index
             contents.append(mobase.ModDataContent.Content(index, "缩略图", str(icon)))
@@ -192,7 +201,7 @@ class DarkestDungeonSaveGame(BasicGameSaveGame):
             return magic == b"/x01/xb1/x00/x00" or magic == b"\x01\xb1\x00\x00"
 
     def loadJSONSaveFile(self, dataPath: Path):
-        text = dataPath.read_text(encoding="utf-8")
+        text = dataPath.read_text()
         content = json.loads(text)
         data = content["data"]
         self.name = str(data["estatename"])
@@ -302,14 +311,16 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
         organizer.pluginList().onRefreshed(self.Refreshed)
         return True
 
+    def _get_overwrite_path(self):
+        return Path(self._organizer.overwritePath())
+
     def _get_game_path(self):
         return Path(self.gameDirectory().absolutePath())
 
-    def _get_mods_path(self):
+    def _get_mo_mods_path(self):
         return Path(self._organizer.modsPath())
 
     def Refreshed(self):
-
         def acf_parser(
             acf_file: str,
         ) -> Dict[str, Dict[str, Dict[str, Dict[str, str]]]]:
@@ -527,7 +538,6 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
                 ).write("")
 
     def mappings(self) -> List[mobase.Mapping]:
-
         # save mapping
         # save_mapping:List[mobase.Mapping] = []
         # if self._organizer.profile().localSavesEnabled():
@@ -557,13 +567,13 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
 	<ItemDescription/>
 	<PublishedFileId>0000000000</PublishedFileId>
 </project>"""
-        project_xml = Path(self._organizer.overwritePath()) / "project.xml"
+        project_xml = self._get_overwrite_path() / "project.xml"
         if not project_xml.exists():
             project_xml.touch()
         project_xml.write_text(project_text)
 
         # merge raid_settings.json
-        override_script_path = Path(self._organizer.overwritePath()) / "scripts"
+        override_script_path = self._get_overwrite_path() / "scripts"
         raid_settings_keys = [
             "torch_settings_data_table",
             "raid_rules_override_data_table",
@@ -579,13 +589,20 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
         ]
         for mod in modlist:
             raid_settings_file = (
-                self._get_mods_path() / mod / "scripts" / "raid_settings.json"
+                self._get_mo_mods_path() / mod / "scripts" / "raid_settings.json"
             )
             if raid_settings_file.exists():
-                for key in raid_settings_keys:
-                    raid_settings[key] += json.loads(open(raid_settings_file).read())[
-                        key
-                    ]
+                try:
+                    mod_raid_settings = json.loads(open(raid_settings_file).read())
+                except json.JSONDecodeError:
+                    continue
+                for effect_file_name in raid_settings_keys:
+                    try:
+                        raid_settings[effect_file_name] += mod_raid_settings[
+                            effect_file_name
+                        ]
+                    except KeyError:
+                        continue
         if not override_script_path.exists():
             override_script_path.mkdir(exist_ok=True)
         open(override_script_path / "raid_settings.json", "w+").write(
@@ -603,55 +620,55 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
         # merge effect files
         effect_mapping: List[mobase.Mapping] = []
         effect_files: Dict[str, List[Path]] = defaultdict(list)
-        if not (Path(self._organizer.overwritePath()) / "effects").exists():
-            (Path(self._organizer.overwritePath()) / "effects").mkdir(exist_ok=True)
+        overwrite_effect_folder = self._get_overwrite_path() / "effects"
+        if not overwrite_effect_folder.exists():
+            overwrite_effect_folder.mkdir()
         else:
-            for file in (Path(self._organizer.overwritePath()) / "effects").glob(
-                "*.effects.darkest"
-            ):
+            for file in overwrite_effect_folder.glob("*.effects.darkest"):
                 file.unlink()
         for mod in modlist:
-            for effect_file in (self._get_mods_path() / mod / "effects").glob(
+            for effect_file in (self._get_mo_mods_path() / mod / "effects").glob(
                 "*.effects.darkest"
             ):
                 effect_files[effect_file.name].append(effect_file)
-        for key, files in effect_files.items():
+        for effect_file_name, files in effect_files.items():
             if len(files) > 1:
-                contents = "\n".join([i.read_text() for i in files])
-                open(
-                    Path(self._organizer.overwritePath()) / "effects" / f"{key}", "w+"
-                ).write(contents)
+                contents = "\n".join([try_read_text(i) for i in files])
+                open(overwrite_effect_folder / f"{effect_file_name}", "w+").write(
+                    contents
+                )
                 effect_mapping.append(
                     mobase.Mapping(
-                        str(
-                            Path(self._organizer.overwritePath()) / "effects" / f"{key}"
-                        ),
-                        str(self._get_game_path() / "effects" / f"{key}"),
+                        str(overwrite_effect_folder / f"{effect_file_name}"),
+                        str(self._get_game_path() / "effects" / f"{effect_file_name}"),
                         False,
                         True,
                     )
                 )
 
-        # mapping other files
-        nomod_mapping: List[mobase.Mapping] = []
-        none_mod_dirs = ["fe_flow", "fonts", "localization", "cursors", "overlays"]
+        # mapping static resource files
+        static_resource_mapping: List[mobase.Mapping] = []
+        static_resource_path = [
+            "fe_flow",
+            "fonts",
+            "localization",
+            "cursors",
+            "overlays",
+        ]
         for mod in modlist:
-            for dir in set(none_mod_dirs) & set(
-                [i.name for i in (self._get_mods_path() / mod).glob("*")]
+            for path in set(static_resource_path) & set(
+                [i.name for i in (self._get_mo_mods_path() / mod).glob("*")]
             ):
-                qInfo(
-                    f"mapping {ascii(str(self._get_mods_path() / mod / dir))} to {ascii(str(self._get_game_path() / dir))}"
-                )
-                nomod_mapping.append(
+                static_resource_mapping.append(
                     mobase.Mapping(
-                        str(self._get_mods_path() / mod / dir),
-                        str(self._get_game_path() / dir),
+                        str(self._get_mo_mods_path() / mod / path),
+                        str(self._get_game_path() / path),
                         True,
                         True,
                     )
                 )
 
-        return effect_mapping + raid_settings_mapping + nomod_mapping
+        return effect_mapping + raid_settings_mapping + static_resource_mapping
 
     def executables(self):
         if self.is_steam():
