@@ -188,10 +188,10 @@ class DarkestDungeonSaveGame(BasicGameSaveGame):
         with dataPath.open(mode="rb") as fp:
             magic = fp.read(4)
             # magic number in binary save files
-            return magic == b"/x01/xb1/x00/x00"
+            return magic == b"/x01/xb1/x00/x00" or magic == b"\x01\xb1\x00\x00"
 
     def loadJSONSaveFile(self, dataPath: Path):
-        text = dataPath.read_text()
+        text = dataPath.read_text(encoding="utf-8")
         content = json.loads(text)
         data = content["data"]
         self.name = str(data["estatename"])
@@ -308,7 +308,6 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
         return Path(self._organizer.modsPath())
 
     def Refreshed(self):
-        pass
 
         def acf_parser(
             acf_file: str,
@@ -700,7 +699,7 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
         return documentsSaves
 
     def listSaves(self, folder: QDir) -> list[mobase.ISaveGame]:
-        qInfo(f"{folder.absolutePath()}")
+        folder = self.savesDirectory()
         profiles: list[Path] = []
         for path in Path(folder.absolutePath()).glob("profile_*"):
             qInfo(f"Found profile: {path.name}")
