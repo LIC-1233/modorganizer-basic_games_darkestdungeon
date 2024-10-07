@@ -1,17 +1,18 @@
-from collections import defaultdict
 import json
-from pathlib import Path
 import random
 import re
 import shutil
+from collections import defaultdict
+from pathlib import Path
+from typing import Dict, List  # type: ignore
 from xml.etree import ElementTree as ET
 from xml.etree.ElementTree import Element
-from typing import Dict, Iterable, List  # type: ignore
+
 import mobase
 from PyQt6.QtCore import QDir, QFileInfo, QStandardPaths, qInfo
 
 from ..basic_game import BasicGame, BasicGameSaveGame
-from ..steam_utils import find_steam_path, find_games
+from ..steam_utils import find_games, find_steam_path
 
 
 class xml_data:
@@ -156,12 +157,12 @@ class DarkestDungeonModDataContent(mobase.ModDataContent):
     def getAllContents(self) -> list[mobase.ModDataContent.Content]:
         contents: List[mobase.ModDataContent.Content] = []
         icons = [i for i in Path(self.modPath).glob("*/preview_file/*.png")]
-        for icon, index in zip(icons, range(1, 1 + len(icons))):
+        for icon, index in zip(icons, range(1, 1 + len(icons)),strict=True):
             pass
             self.modIdMap[icon.parent.parent.name] = index
             contents.append(mobase.ModDataContent.Content(index, "缩略图", str(icon)))
         icons = [i for i in Path(self.modPath).glob("*/preview_icon.png")]
-        for icon, index in zip(icons, range(1, 1 + len(icons))):
+        for icon, index in zip(icons, range(1, 1 + len(icons)),strict=True):
             pass
             self.modIdMap[icon.parent.name] = index
             contents.append(mobase.ModDataContent.Content(index, "缩略图", str(icon)))
@@ -385,7 +386,7 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
             if not mod.categories():
                 qInfo(f"Adding category to {ascii(mod_name)}")
                 for i in mod_data.mod_tags:
-                    if not i in mod.categories():
+                    if i not in mod.categories():
                         mod.addCategory(str(i))
                 if (
                     manifest_file.exists()
