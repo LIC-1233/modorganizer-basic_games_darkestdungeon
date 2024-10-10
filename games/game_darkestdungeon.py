@@ -12,7 +12,7 @@ import mobase
 from PyQt6.QtCore import QDir, QFileInfo, QStandardPaths, qInfo
 
 from ..basic_game import BasicGame, BasicGameSaveGame
-from ..steam_utils import find_games, find_steam_path
+from ..steam_utils import find_games, find_steam_path, parse_library_info
 
 
 class xml_data:
@@ -294,7 +294,14 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
     def _get_game_path(self):
         return Path(self.gameDirectory().absolutePath())
 
-    def _get_workshop_path(self):
+    def _get_game_workshop_path(self):
+        steam_path = find_steam_path()
+        if steam_path is not None:
+            library_folders = parse_library_info(steam_path / "steamapps" / "libraryfolders.vdf")
+            for library_folder in library_folders:
+                acf_file = library_folder.path / "steamapps" / "workshop" / "appworkshop_262060.acf"
+                if acf_file.exists():
+                    return library_folder.path / "steamapps" / "workshop"
         return find_games()["262060"].parent.parent / "workshop"
 
     def _get_mo_mods_path(self):
@@ -304,15 +311,18 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
         def acf_parser(
             acf_file: str | Path,
         ) -> Dict[str, Dict[str, Dict[str, Dict[str, str]]]]:
-            acf_content = open(acf_file).read()
-            acf_content = re.sub(r'(".*?")\t*', r"\g<1>:", acf_content)
-            acf_content = "{" + acf_content + "}"
-            acf_content = re.sub(r':(\n\t*")', r",\g<1>", acf_content)
-            acf_content = re.sub(r":(\n\t*\})", r",\g<1>", acf_content)
-            acf_content = re.sub(r"\}", r"},", acf_content)
-            acf_content = re.sub(r",(\n\t*\})", r"\g<1>", acf_content)
-            acf_content = acf_content.strip(",")
-            return json.loads(acf_content)
+            try:
+                acf_content = open(acf_file).read()
+                acf_content = re.sub(r'(".*?")\t*', r"\g<1>:", acf_content)
+                acf_content = "{" + acf_content + "}"
+                acf_content = re.sub(r':(\n\t*")', r",\g<1>", acf_content)
+                acf_content = re.sub(r":(\n\t*\})", r",\g<1>", acf_content)
+                acf_content = re.sub(r"\}", r"},", acf_content)
+                acf_content = re.sub(r",(\n\t*\})", r"\g<1>", acf_content)
+                acf_content = acf_content.strip(",")
+                return json.loads(acf_content)
+            except Exception as e:
+                raise ValueError(f"failed to parse acf {acf_file}") from e
 
         def scopy_mod(scr: str | Path, dst: str | Path) -> str:  # type: ignore
             scr = str(scr)
@@ -326,7 +336,7 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
                 return dst
 
         qInfo("refreshing")
-        acf_path = self._get_workshop_path() / "appworkshop_262060.acf"
+        acf_path = self._get_game_workshop_path() / "appworkshop_262060.acf"
         workshop_items = acf_parser(acf_path)["AppWorkshop"]["WorkshopItemDetails"]
         mod_list = self._organizer.modList()
         mod_names = mod_list.allMods()
@@ -384,7 +394,7 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
 
         # copy steam workshop mods
         # 使用mod_PublishedFileId保证唯一，可能会出现本地mod占用的问题
-        game_workshop_path = self._get_workshop_path() / "content" / "262060"
+        game_workshop_path = self._get_game_workshop_path() / "content" / "262060"
         for PublishedFileId in set([i for i in workshop_items.keys()]) - set([i for i in mo_workshop_PublishedFileId.keys()]):
             xml_file = game_workshop_path / PublishedFileId / "project.xml"
             if not xml_file.exists():
