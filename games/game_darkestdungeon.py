@@ -11,6 +11,7 @@ from xml.etree.ElementTree import Element
 import mobase
 from PyQt6.QtCore import QDir, QFileInfo, QStandardPaths, qInfo
 
+from ..basic_features.basic_save_game_info import BasicGameSaveGameInfo
 from ..basic_game import BasicGame, BasicGameSaveGame
 from ..steam_utils import find_games, find_steam_path, parse_library_info
 
@@ -250,6 +251,15 @@ class DarkestDungeonSaveGame(BasicGameSaveGame):
         return self.name
 
 
+class DarkestDungeonSaveGameInfo(BasicGameSaveGameInfo):
+    @staticmethod
+    def get_metadata(save_path: Path, save: mobase.ISaveGame) -> Dict[str, str]:
+        return {"Name": save.getName()}
+
+    def __init__(self):
+        super().__init__(get_metadata=self.get_metadata)
+
+
 class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
     Name = "DarkestDungeon"
     Author = "LIC"
@@ -275,6 +285,7 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
         self._organizer = organizer
         self._register_feature(DarkestDungeonModDataChecker())
         self._register_feature(DarkestDungeonModDataContent(organizer.modsPath()))
+        self._register_feature(DarkestDungeonSaveGameInfo())
         organizer.pluginList().onRefreshed(self.Refreshed)
         return True
 
@@ -576,7 +587,7 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
 
         # mapping static resource files
         static_resource_mapping: List[mobase.Mapping] = []
-        static_resource_path = [
+        static_resource_folder = [
             "fe_flow",
             "fonts",
             "localization",
@@ -584,7 +595,7 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
             "overlays",
         ]
         for mod_title in mod_titles:
-            for path in set(static_resource_path) & set([i.name for i in (self._get_mo_mods_path() / mod_title).glob("*")]):
+            for path in set(static_resource_folder) & set([i.name for i in (self._get_mo_mods_path() / mod_title).glob("*")]):
                 static_resource_mapping.append(
                     mobase.Mapping(
                         str(self._get_mo_mods_path() / mod_title / path),
