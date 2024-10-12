@@ -9,7 +9,8 @@ from xml.etree import ElementTree as ET
 from xml.etree.ElementTree import Element
 
 import mobase
-from PyQt6.QtCore import QDir, QFileInfo, QStandardPaths, qInfo
+import psutil
+from PyQt6.QtCore import QDir, QFileInfo, QStandardPaths, qCritical, qInfo
 
 from ..basic_features.basic_save_game_info import BasicGameSaveGameInfo
 from ..basic_game import BasicGame, BasicGameSaveGame
@@ -287,6 +288,19 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
         self._register_feature(DarkestDungeonModDataContent(organizer.modsPath()))
         self._register_feature(DarkestDungeonSaveGameInfo())
         organizer.pluginList().onRefreshed(self.Refreshed)
+        organizer.onAboutToRun(self.shutdown_when_steam_not_running)
+        return True
+
+    def is_steam_runing(self) -> bool:
+        for pid in psutil.pids():
+            if psutil.Process(pid).name() == "steam.exe":
+                return True
+        return False
+    
+    def shutdown_when_steam_not_running(self,file:str,location:QDir,arguments:str) -> bool:
+        if not self.is_steam_runing() and Path(file).name == "darkest.exe":
+            qCritical("Steam is not running!!!!!! RUN STEAM FIRST!!!!!!")
+            return False
         return True
 
     @staticmethod
