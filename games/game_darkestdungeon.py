@@ -1,4 +1,6 @@
 import json
+import logging
+import os
 import random
 import re
 import shutil
@@ -281,6 +283,32 @@ class DarkestDungeonSaveGameInfo(BasicGameSaveGameInfo):
         super().__init__(get_metadata=self.get_metadata)
 
 
+class DarkestDungeonLocalSavegames(mobase.LocalSavegames):
+    def __init__(self):
+        super().__init__()
+
+    def mappings(self, profile_save_dir: QDir):
+        username = os.getlogin()
+        userpath = os.path.expanduser("~").replace("USERNAME", username)
+
+        source = profile_save_dir.absolutePath()
+        destinations = [
+            f"{userpath}\\Documents\\Darkest",
+        ]
+        return [
+            mobase.Mapping(
+                source=source,
+                destination=destination,
+                is_directory=True,
+                create_target=True,
+            )
+            for destination in destinations
+        ]
+
+    def prepareProfile(self, profile: mobase.IProfile) -> bool:
+        return profile.localSavesEnabled()
+
+
 class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
     Name = "DarkestDungeon"
     Author = "LIC"
@@ -304,12 +332,28 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
         mobase.IPluginFileMapper.__init__(self)
         self._organizer: mobase.IOrganizer = None  # type: ignore
 
+    def local_saves_directory(self) -> List[Path]:
+        self._organizer.profilePath()
+        docSaves = Path.home() / "Saved Games" / "Darkest"
+        if (steamDir := find_steam_path()) is None:
+            logging.info("Steam not found")
+            return [docSaves]
+        for child in steamDir.joinpath("userdata").iterdir():
+            if not child.is_dir() or child.name == "0":
+                continue
+            steamSaves = child.joinpath("262060")
+            if steamSaves.is_dir():
+                return [docSaves, steamSaves]
+        logging.info("Steam saves not found")
+        return [docSaves]
+
     def init(self, organizer: mobase.IOrganizer) -> bool:
         super().init(organizer)
         self._organizer = organizer
         self._register_feature(DarkestDungeonModDataChecker())
         self._register_feature(DarkestDungeonModDataContent(organizer.modsPath()))
         self._register_feature(DarkestDungeonSaveGameInfo())
+        self._register_feature(DarkestDungeonLocalSavegames())
         organizer.pluginList().onRefreshed(self.Refreshed)
         organizer.onAboutToRun(self.shutdown_when_steam_not_running)
         return True
