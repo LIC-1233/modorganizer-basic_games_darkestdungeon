@@ -1,22 +1,330 @@
 import json
 import logging
-import os
 import random
 import re
 import shutil
+import struct
 from collections import defaultdict
+from io import BytesIO
 from pathlib import Path
-from typing import Dict, List
+from typing import Any, Dict, List, Literal, Sequence
 from xml.etree import ElementTree as ET
 from xml.etree.ElementTree import Element
 
 import mobase
 import psutil
-from PyQt6.QtCore import QDir, QFileInfo, QStandardPaths, qCritical, qInfo
+from PyQt6.QtCore import QDir, QFileInfo, QStandardPaths, Qt, qCritical, qInfo
+from PyQt6.QtWidgets import QGridLayout, QLabel, QWidget
 
-from ..basic_features.basic_save_game_info import BasicGameSaveGameInfo
 from ..basic_game import BasicGame, BasicGameSaveGame
 from ..steam_utils import find_games, find_steam_path, parse_library_info
+
+logger = logging.getLogger()
+
+
+class Meta1node:
+    def __init__(self, id: int):
+        self.id: int = id
+        self.key: str = f"{id}"
+        self.value: dict[str, Any] = {}
+        self.children: dict[int, Meta1node] = {}
+        self.parent: Meta1node
+
+    def set_key(self, key: str):
+        self.key = key
+
+    def add_value(self, value: Dict[str, Any]):
+        self.value.update(value)
+
+    def to_dict(self) -> Dict[str, Any]:
+        result = self.value.copy()
+        for node in self.children.values():
+            result.update(node.to_dict())
+        return {self.key: result}
+
+
+class Meta1nodeManager:
+    def __init__(self) -> None:
+        self._nodes: Dict[int, Meta1node] = {}
+
+    def get_node(self, id: int) -> Meta1node | None:
+        return self._nodes.get(id)
+
+    def add_node(self, id: int):
+        self._nodes[id] = Meta1node(id)
+        return self._nodes[id]
+
+    def add_child(self, parent: Meta1node, child: Meta1node):
+        parent.children[child.id] = child
+        child.parent = parent
+
+    def to_dict(self) -> Dict[str, Any]:
+        return self._nodes[0].to_dict()
+
+    def parse_raw(self, raw_data: BytesIO, numMeta1Entries: int):
+        for x in range(numMeta1Entries):
+            parent_id = int.from_bytes(raw_data.read(4), "little")
+            raw_data.seek(12, 1)
+            child_node = self.add_node(x)
+            if parent_id in self._nodes:
+                parent = self.get_node(parent_id)
+                child = child_node
+                if parent is not None:
+                    self.add_child(parent, child)
+
+
+class persist:
+    def __init__(self, file: str | Path):
+        self.file = Path(file)
+
+    TYPE_FLOAT = ["current_hp", "m_Stress", "actor", "buff_group", "amount", "chapters", "percent", "non_rolled_additional_chances", "chance"]
+
+    TYPE_INTVECTOR = [
+        "read_page_indexes",
+        "raid_read_page_indexes",
+        "raid_unread_page_indexes",  # journal.json
+        "dungeons_unlocked",
+        "played_video_list",  # game_knowledge.json
+        "trinket_retention_ids",  # quest.json
+        "last_party_guids",
+        "dungeon_history",
+        "buff_group_guids",  # roster.json
+        "result_event_history",  # town_event.json
+        "dead_hero_entries",  # town_event.json
+        "additional_mash_disabled_infestation_monster_class_ids",  # campaign_mash.json
+        "mash",
+        "valid_additional_mash_entry_indexes",  # raid.json
+        "party",
+        "heroes",  # raid.json
+        "skill_cooldown_keys",  # raid.json
+        "skill_cooldown_values",
+        "bufferedSpawningSlotsAvailable",  # raid.json
+        "curioGroups",
+        "curios",  # raid.json
+        "curioGroups",
+        "curio_table_entries",  # raid.json
+        "raid_finish_quirk_monster_class_ids",  # raid.json
+        "narration_audio_event_queue_tags",  # loading_screen.json
+        "dispatched_events",  # tutorial.json
+        "backer_heroes",
+        "combat_skills",
+        "backer_heroes",
+        "camping_skills",
+        "backer_heroes",
+        "quirks",
+    ]
+
+    TYPE_STRINGVECTOR = [
+        "goal_ids",  # quest.json
+        "roaming_dungeon_2_ids",
+        "s",  # campaign_mash.json
+        "quirk_group",  # campaign_log.json
+        "backgroundNames",  # raid.json
+        "backgroundGroups",
+        "backgrounds",  # raid.json
+        "backgroundGroups",
+        "background_table_entries",
+    ]
+
+    TYPE_FLOATARRAY = ["map", "bounds", "areas", "bounds", "areas", "tiles", "mappos", "areas", "tiles", "sidepos"]
+
+    TYPE_TWOINT = ["killRange"]
+
+    @staticmethod
+    def isA(type: List[str], name: str):
+        return name in type
+
+    @staticmethod
+    def parseFloatArray(name: str, valueBytes: bytes, alignment_skip: int, aligned_size: int) -> list[str] | Literal[False]:
+        if persist.isA(persist.TYPE_FLOATARRAY, name):
+            floats = valueBytes[alignment_skip : alignment_skip + aligned_size]
+            buffer = BytesIO(floats)
+            sb: List[str] = []
+            while buffer.tell() < len(floats):
+                f = struct.unpack_from("<f", buffer.read(4))[0]
+                sb.append(str(f))
+            return sb
+        return False
+
+    @staticmethod
+    def parseIntVector(name: str, valueBytes: bytes, alignment_skip: int, aligned_size: int) -> list[str] | Literal[False]:
+        if persist.isA(persist.TYPE_INTVECTOR, name):
+            tempArr = valueBytes[alignment_skip : alignment_skip + 4]
+            arrLen = struct.unpack("<I", tempArr)[0]
+            if aligned_size == (arrLen + 1) * 4:
+                tempArr2 = valueBytes[alignment_skip + 4 : alignment_skip + (arrLen + 1) * 4]
+                buffer = BytesIO(tempArr2)
+                sb: List[str] = []
+                for _i in range(arrLen):
+                    tempInt = struct.unpack_from("<I", buffer.read(4))[0]
+                    sb.append(str(tempInt))
+                return sb
+        return False
+
+    @staticmethod
+    def parseStringVector(name: str, valueBytes: bytes, alignment_skip: int, aligned_size: int) -> list[str] | Literal[False]:
+        if persist.isA(persist.TYPE_STRINGVECTOR, name):
+            tempArr = valueBytes[alignment_skip : alignment_skip + 4]
+            arrLen = int.from_bytes(tempArr, "little")
+            strings = valueBytes[alignment_skip + 4 : alignment_skip + aligned_size]
+            bf = BytesIO(strings)
+            sb: List[str] = []
+            for _i in range(arrLen):
+                strlen = struct.unpack_from("<I", bf.read(4))[0]
+                tempArr2 = valueBytes[alignment_skip + 4 + bf.tell() : alignment_skip + 4 + bf.tell() + strlen - 1]
+                sb.append(tempArr2.decode("utf-8"))
+                bf.seek(bf.tell() + strlen)
+            return sb
+        return False
+
+    @staticmethod
+    def parseFloat(name: str, valueBytes: bytes, alignment_skip: int, aligned_size: int) -> str | Literal[False]:
+        if persist.isA(persist.TYPE_FLOAT, name):
+            if aligned_size == 4:
+                tempArr = valueBytes[alignment_skip : alignment_skip + 4]
+                return round(struct.unpack("f", tempArr)[0], 0)
+        return False
+
+    @staticmethod
+    def parseTwoInt(name: str, valueBytes: bytes, alignment_skip: int, aligned_size: int) -> list[int] | Literal[False]:
+        if persist.isA(persist.TYPE_TWOINT, name):
+            if aligned_size == 8:
+                tempArr = valueBytes[alignment_skip : alignment_skip + 8]
+                return [int.from_bytes(tempArr[0:4], "little"), int.from_bytes(tempArr[4:4], "little")]
+        return False
+
+    @staticmethod
+    def parse_hardcoded_type(name: str, valueBytes: bytes, alignment_skip: int, aligned_size: int):
+        return (
+            persist.parseFloatArray(name, valueBytes, alignment_skip, aligned_size)
+            or persist.parseIntVector(name, valueBytes, alignment_skip, aligned_size)
+            or persist.parseStringVector(name, valueBytes, alignment_skip, aligned_size)
+            or persist.parseFloat(name, valueBytes, alignment_skip, aligned_size)
+            or persist.parseTwoInt(name, valueBytes, alignment_skip, aligned_size)
+        )
+
+    @staticmethod
+    def persist_parser(file: str | Path | bytes):
+        meta1nodeManager = Meta1nodeManager()
+        current_node_id = 0
+        if isinstance(file, bytes):
+            fp = BytesIO(file)
+        else:
+            with open(file, "rb") as fb:
+                raw_data = fb.read()
+                fp = BytesIO(raw_data)
+        fp.seek(8, 1)
+        headerLength = int.from_bytes(fp.read(4), "little")
+        if headerLength != 64:
+            raise ValueError("Header Length is not 64: " + str(headerLength))
+        fp.seek(8, 1)
+        numMeta1Entries = int.from_bytes(fp.read(4), "little")
+        meta1Offset = int.from_bytes(fp.read(4), "little")
+        fp.seek(16, 1)
+        numMeta2Entries = int.from_bytes(fp.read(4), "little")
+        meta2Offset = int.from_bytes(fp.read(4), "little")
+        fp.seek(8, 1)
+        dataOffset = int.from_bytes(fp.read(4), "little")
+        fp.seek(0, 2)
+        dataLength = fp.tell()
+        # print(headerLength, meta1Offset, numMeta2Entries, meta2Offset, dataOffset)
+
+        fp.seek(meta1Offset, 0)
+        meta1nodeManager.parse_raw(BytesIO(fp.read(numMeta1Entries * 16)), numMeta1Entries)
+        logger.debug(meta1nodeManager.to_dict())
+
+        fp.seek(meta2Offset, 0)
+        meta2DataLength = dataOffset - meta2Offset
+        if meta2DataLength % 12 != 0:
+            raise ValueError("Meta2 has wrong number of bytes: " + str(meta2DataLength))
+        meta2List: list[tuple[int, int, int]] = []
+        for _ in range(numMeta2Entries):
+            entryHash = int.from_bytes(fp.read(4), "little")
+            entry_relative_offset = int.from_bytes(fp.read(4), "little")
+            fieldInfo = int.from_bytes(fp.read(4), "little")
+            meta2List.append((entryHash, entry_relative_offset, fieldInfo))
+
+        for x in range(numMeta2Entries):
+            meta2_entry = meta2List[x]
+            entry_relative_offset = meta2_entry[1]
+            is_raw = meta2_entry[2] & 0b1
+            name_length = (meta2_entry[2] & 0b11111111100) >> 2
+            meta1_index = (meta2_entry[2] & 0b1111111111111111111100000000000) >> 11
+
+            entry_offset = dataOffset + entry_relative_offset
+            alignment_skip = (4 - (entry_offset + name_length) % 4) % 4
+            entry_relative_data_offset = entry_relative_offset + name_length
+            next_relative_entry_offset = meta2List[x + 1][1] if x + 1 < len(meta2List) else dataLength - dataOffset
+            value_length = next_relative_entry_offset - entry_relative_data_offset
+            aligned_size = value_length - alignment_skip
+
+            fp.seek(entry_offset, 0)
+            nameBytes = fp.read(name_length - 1)
+            fp.seek(1, 1)
+            fp.seek(alignment_skip, 1)
+            name = bytes.decode(nameBytes, "utf-8")
+            # if name == "raw_data":
+            #     logger.setLevel(logging.DEBUG)
+            # else:
+            #     logger.setLevel(logging.INFO)
+
+            def get_value(
+                is_raw: int, entry_offset: int, name: str, name_length: int, value_length: int, alignment_skip: int, aligned_size: int
+            ) -> str | int | bytes | List[bool] | list[float] | list[int] | float | list[str] | Dict[str, Any]:
+                if is_raw:
+                    return ""
+                fp.seek(entry_offset + name_length, 0)
+                valueBytes = fp.read(value_length)
+                if name == "raw_data":
+                    logger.debug(valueBytes[alignment_skip + 4 :])
+                    return persist.persist_parser(valueBytes[alignment_skip + 4 :])
+                if hardcoded_value := persist.parse_hardcoded_type(name, valueBytes, alignment_skip, aligned_size):
+                    return hardcoded_value
+                if value_length == 1:
+                    logger.debug(valueBytes[0])
+                    if valueBytes[0] >= 0x20 and valueBytes[0] <= 0x7E:
+                        return bytes.decode(valueBytes, "utf-8")
+                    else:
+                        return valueBytes[0] != 0x00
+
+                if (
+                    aligned_size == 8
+                    and (valueBytes[alignment_skip + 0] == 0x00 or valueBytes[alignment_skip + 0] == 0x01)
+                    and (valueBytes[alignment_skip + 4] == 0x00 or valueBytes[alignment_skip + 4] == 0x01)
+                ):
+                    return [valueBytes[alignment_skip + 0] != 0x00, valueBytes[alignment_skip + 4] != 0x00]
+
+                if aligned_size == 4:
+                    return int.from_bytes(valueBytes[alignment_skip : alignment_skip + 4], "little")
+                if aligned_size >= 5:
+                    str_len = int.from_bytes(valueBytes[alignment_skip : alignment_skip + 4], "little")
+                    logger.debug(str_len)
+                    if aligned_size == str_len + 4:
+                        strBytes = valueBytes[alignment_skip + 4 : alignment_skip + 4 + str_len - 1]
+                        try:
+                            return bytes.decode(strBytes, "utf-8")
+                        except Exception:
+                            pass
+                try:
+                    return bytes.decode(valueBytes, "utf-8")
+                except Exception:
+                    return valueBytes
+
+            value = get_value(is_raw, entry_offset, name, name_length, value_length, alignment_skip, aligned_size)
+
+            logger.debug(
+                f"is_raw:{is_raw}\tnameLength:{name_length}\tmeta1_block_index:{meta1_index}\talignment:{4 - (dataOffset + meta2_entry[1] + name_length) % 4}\tvalueLength{value_length}"
+            )
+            logger.debug(f"name:{name}\tvalue:{value}")
+            if is_raw:
+                if node := meta1nodeManager.get_node(meta1_index):
+                    node.set_key(name)
+                    current_node_id = meta1_index
+            else:
+                if node := meta1nodeManager.get_node(current_node_id):
+                    node.add_value({name: value})
+
+        return meta1nodeManager.to_dict()
 
 
 class xml_data:
@@ -56,34 +364,20 @@ class xml_data:
         mod_PublishedFileId: str = ""
         tree = ET.parse(xml_file)
         if not tree:
-            return cls(
-                mod_title, mod_versions, mod_tags, mod_description, mod_PublishedFileId
-            )
+            return cls(mod_title, mod_versions, mod_tags, mod_description, mod_PublishedFileId)
         root = tree.getroot()
         mod_title = cls.etree_text_iter(root, "Title") or mod_title
         mod_title = re.sub(r'[\/:*?"<>|]', "_", mod_title).strip()
-        mod_versions[0] = int(
-            cls.etree_text_iter(root, "VersionMajor") or mod_versions[0]
-        )
-        mod_versions[1] = int(
-            cls.etree_text_iter(root, "VersionMinor") or mod_versions[1]
-        )
-        mod_versions[2] = int(
-            cls.etree_text_iter(root, "TargetBuild") or mod_versions[2]
-        )
-        mod_description = (
-            cls.etree_text_iter(root, "ItemDescription") or mod_description
-        )
-        mod_PublishedFileId = (
-            cls.etree_text_iter(root, "PublishedFileId") or mod_PublishedFileId
-        )
+        mod_versions[0] = int(cls.etree_text_iter(root, "VersionMajor") or mod_versions[0])
+        mod_versions[1] = int(cls.etree_text_iter(root, "VersionMinor") or mod_versions[1])
+        mod_versions[2] = int(cls.etree_text_iter(root, "TargetBuild") or mod_versions[2])
+        mod_description = cls.etree_text_iter(root, "ItemDescription") or mod_description
+        mod_PublishedFileId = cls.etree_text_iter(root, "PublishedFileId") or mod_PublishedFileId
         for Tags in root.iter("Tags"):
             if not isinstance(Tags.text, str) or not Tags.text.strip():
                 continue
             mod_tags.append(Tags.text)
-        return cls(
-            mod_title, mod_versions, mod_tags, mod_description, mod_PublishedFileId
-        )
+        return cls(mod_title, mod_versions, mod_tags, mod_description, mod_PublishedFileId)
 
 
 class DarkestDungeonModDataChecker(mobase.ModDataChecker):
@@ -126,9 +420,7 @@ class DarkestDungeonModDataChecker(mobase.ModDataChecker):
         ]
         self.invalidFileNames = ["project.xml", "preview_icon.png", "modfiles.txt"]
 
-    def dataLooksValid(
-        self, filetree: mobase.IFileTree
-    ) -> mobase.ModDataChecker.CheckReturn:
+    def dataLooksValid(self, filetree: mobase.IFileTree) -> mobase.ModDataChecker.CheckReturn:
         for entry in filetree:
             if entry.name().casefold() in self.invalidFileNames:
                 return mobase.ModDataChecker.FIXABLE
@@ -180,17 +472,21 @@ class DarkestDungeonModDataContent(mobase.ModDataContent):
 class DarkestDungeonSaveGame(BasicGameSaveGame):
     def __init__(self, filepath: Path):
         super().__init__(filepath)
-        dataPath = filepath.joinpath("persist.game.json")
+        self._filepath = filepath
+        dataPath: Path = filepath.joinpath("persist.game.json")
         self.name: str = ""
         if self.isBinary(dataPath):
             self.loadBinarySaveFile(dataPath)
         else:
             self.loadJSONSaveFile(dataPath)
 
+    def allFiles(self) -> list[str]:
+        return [str(i) for i in self._filepath.rglob("*.json")]
+
     @staticmethod
     def isBinary(dataPath: Path) -> bool:
         with dataPath.open(mode="rb") as fp:
-            magic = fp.read(4)
+            magic: bytes = fp.read(4)
             # magic number in binary save files
             return magic == b"/x01/xb1/x00/x00" or magic == b"\x01\xb1\x00\x00"
 
@@ -232,17 +528,13 @@ class DarkestDungeonSaveGame(BasicGameSaveGame):
             fp.seek(meta1Offset, 0)
             meta1DataLength = meta2Offset - meta1Offset
             if meta1DataLength % 16 != 0:
-                raise ValueError(
-                    "Meta1 has wrong number of bytes: " + str(meta1DataLength)
-                )
+                raise ValueError("Meta1 has wrong number of bytes: " + str(meta1DataLength))
 
             # read Meta2 Block
             fp.seek(meta2Offset, 0)
             meta2DataLength = dataOffset - meta2Offset
             if meta2DataLength % 12 != 0:
-                raise ValueError(
-                    "Meta2 has wrong number of bytes: " + str(meta2DataLength)
-                )
+                raise ValueError("Meta2 has wrong number of bytes: " + str(meta2DataLength))
             meta2List: list[tuple[int, int, int]] = []
             for _ in range(numMeta2Entries):
                 entryHash = int.from_bytes(fp.read(4), "little")
@@ -274,26 +566,15 @@ class DarkestDungeonSaveGame(BasicGameSaveGame):
         return self.name
 
 
-class DarkestDungeonSaveGameInfo(BasicGameSaveGameInfo):
-    @staticmethod
-    def get_metadata(save_path: Path, save: mobase.ISaveGame) -> Dict[str, str]:
-        return {"Name": save.getName()}
-
-    def __init__(self):
-        super().__init__(get_metadata=self.get_metadata)
-
-
 class DarkestDungeonLocalSavegames(mobase.LocalSavegames):
     def __init__(self):
         super().__init__()
 
     def mappings(self, profile_save_dir: QDir):
-        username = os.getlogin()
-        userpath = os.path.expanduser("~").replace("USERNAME", username)
 
         source = profile_save_dir.absolutePath()
         destinations = [
-            f"{userpath}\\Documents\\Darkest",
+            f"{QStandardPaths.standardLocations(QStandardPaths.StandardLocation.DocumentsLocation)}\\Darkest",
         ]
         return [
             mobase.Mapping(
@@ -307,6 +588,56 @@ class DarkestDungeonLocalSavegames(mobase.LocalSavegames):
 
     def prepareProfile(self, profile: mobase.IProfile) -> bool:
         return profile.localSavesEnabled()
+
+
+class BasicGameSaveGameInfoWidget(mobase.ISaveGameInfoWidget):
+    GAME_MODE = {"base": "极暗", "radiant": "光耀", "new_game_plus": "狱火", "bloodmoon": "血月"}
+
+    def __init__(self, parent: QWidget):
+        super().__init__(parent)
+        self._layout = QGridLayout()
+        self._save_name = QLabel()
+        self._game_mode = QLabel()
+        self._date_time = QLabel()
+        self._isin_raid = QLabel()
+        self._layout.addWidget(QLabel("存档:"), 0, 0)
+        self._layout.addWidget(self._save_name, 0, 1)
+        self._layout.addWidget(QLabel("难度:"), 0, 2)
+        self._layout.addWidget(self._game_mode, 0, 3)
+        self._layout.addWidget(QLabel("最后游玩时间:"), 1, 0, 1, 2)
+        self._layout.addWidget(self._date_time, 1, 2, 1, 4)
+        self._layout.addWidget(QLabel("当前在:"), 0, 4)
+        self._layout.addWidget(self._isin_raid, 0, 5)
+        self.setLayout(self._layout)
+
+    def setSave(self, save: mobase.ISaveGame):
+        save_path = Path(save.getFilepath())
+        game_data = persist.persist_parser(save_path / "persist.game.json")
+        self.hide()
+        self._save_name.clear()
+        self._game_mode.clear()
+        self._date_time.clear()
+        self._isin_raid.clear()
+        self._save_name.setText(f"{game_data['base_root']['estatename']}")
+        if game_data["base_root"]["game_mode"] in self.GAME_MODE:
+            self._game_mode.setText(f"{self.GAME_MODE[game_data['base_root']['game_mode']]}")
+        else:
+            self._game_mode.setText(f"{game_data['base_root']['game_mode']}")
+        self._date_time.setText(f"{game_data['base_root']['date_time']}")
+        self._isin_raid.setText("地牢" if game_data["base_root"]["inraid"] else "小镇")
+        self.setWindowFlags(Qt.WindowType.ToolTip | Qt.WindowType.BypassGraphicsProxyWidget)
+        self.show()
+
+
+class DarkestDungeonSaveGameInfo(mobase.SaveGameInfo):
+    def __init__(self):
+        super().__init__()
+
+    def getMissingAssets(self: "DarkestDungeonSaveGameInfo", save: mobase.ISaveGame) -> Dict[str, Sequence[str]]:
+        return {}
+
+    def getSaveGameWidget(self: "DarkestDungeonSaveGameInfo", parent: QWidget) -> BasicGameSaveGameInfoWidget | None:
+        return BasicGameSaveGameInfoWidget(parent)
 
 
 class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
@@ -336,7 +667,7 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
         self._organizer.profilePath()
         docSaves = Path.home() / "Saved Games" / "Darkest"
         if (steamDir := find_steam_path()) is None:
-            logging.info("Steam not found")
+            logger.info("Steam not found")
             return [docSaves]
         for child in steamDir.joinpath("userdata").iterdir():
             if not child.is_dir() or child.name == "0":
@@ -344,7 +675,7 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
             steamSaves = child.joinpath("262060")
             if steamSaves.is_dir():
                 return [docSaves, steamSaves]
-        logging.info("Steam saves not found")
+        logger.info("Steam saves not found")
         return [docSaves]
 
     def init(self, organizer: mobase.IOrganizer) -> bool:
@@ -360,8 +691,11 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
 
     def is_steam_runing(self) -> bool:
         for pid in psutil.pids():
-            if psutil.Process(pid).name() == "steam.exe":
-                return True
+            try:
+                if psutil.Process(pid).name() == "steam.exe":
+                    return True
+            except Exception:
+                pass
         return False
 
     def shutdown_when_steam_not_running(
@@ -413,7 +747,7 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
             acf_file: str | Path,
         ) -> Dict[str, Dict[str, Dict[str, Dict[str, str]]]]:
             try:
-                acf_content = open(acf_file).read()
+                acf_content = open(acf_file, encoding="utf-8").read()
                 acf_content = re.sub(r'(".*?")\t*', r"\g<1>:", acf_content)
                 acf_content = "{" + acf_content + "}"
                 acf_content = re.sub(r':(\n\t*")', r",\g<1>", acf_content)
@@ -816,12 +1150,6 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
 
     def listSaves(self, folder: QDir) -> list[mobase.ISaveGame]:
         folder = self.savesDirectory()
-        profiles: list[Path] = []
-        for path in Path(folder.absolutePath()).glob("profile_*"):
-            # profile_9 is only for the Multiplayer DLC "The Butcher's Circus"
-            # and contains different files than other profiles
-            if path.name == "profile_9":
-                continue
-            profiles.append(path)
-
+        profiles: list[Path] = list(Path(folder.absolutePath()).glob("profile_[0-8]"))
+        # profile_9 是对战模式存档
         return [DarkestDungeonSaveGame(path) for path in profiles]
