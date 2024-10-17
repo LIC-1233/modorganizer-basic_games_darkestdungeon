@@ -785,8 +785,8 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
             for i in mo_mod_path.glob("*/project_file/l*.manifest")
         }
 
-        if not (self._get_game_path() / "mods/!!MOD").exists():
-            (self._get_game_path() / "mods/!!MOD").mkdir(parents=True, exist_ok=True)
+        if not (self._get_game_path() / Path(self.GameDataPath)).exists():
+            (self._get_game_path() / Path(self.GameDataPath)).mkdir(parents=True, exist_ok=True)
 
         for mod_name in mod_names:
             mod = mod_list.getMod(mod_name)
@@ -967,140 +967,148 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
                 )
 
     def mappings(self) -> List[mobase.Mapping]:
-        # save mapping
-        # save_mapping:List[mobase.Mapping] = []
-        # if self._organizer.profile().localSavesEnabled():
-        #     qInfo((self.savesDirectory().absolutePath()))
-        #     save_mapping.append(mobase.Mapping(
-        #         self._organizer.profile().absolutePath()+"/saves",
-        #         self.savesDirectory().absolutePath(),
-        #         True,
-        #         True
-        #         ))
+        mod_titles = [i for i in self._organizer.modList().allModsByProfilePriority() if self._organizer.modList().state(i) & mobase.ModState.ACTIVE]
 
-        # merge mod xml
-        project_text = """
-<project>
-	<PreviewIconFile>preview_icon.png</PreviewIconFile>
-	<ItemDescriptionShort/>
-	<ModDataPath></ModDataPath>
-	<Title>merge mod</Title>
-	<Language>english</Language>
-	<UpdateDetails/>
-	<Visibility>private</Visibility>
-	<UploadMode>dont_submit</UploadMode>
-	<VersionMajor>1</VersionMajor>
-	<VersionMinor>0</VersionMinor>
-	<TargetBuild>0</TargetBuild>
-	<Tags/>
-	<ItemDescription/>
-	<PublishedFileId>0000000000</PublishedFileId>
-</project>"""
-        xml_path = self._get_overwrite_path() / "project.xml"
-        xml_path.write_text(project_text)
+        def merge_xml():  # merge mod xml
+            project_text = """
+    <project>
+        <PreviewIconFile>preview_icon.png</PreviewIconFile>
+        <ItemDescriptionShort/>
+        <ModDataPath></ModDataPath>
+        <Title>merge mod</Title>
+        <Language>english</Language>
+        <UpdateDetails/>
+        <Visibility>private</Visibility>
+        <UploadMode>dont_submit</UploadMode>
+        <VersionMajor>1</VersionMajor>
+        <VersionMinor>0</VersionMinor>
+        <TargetBuild>0</TargetBuild>
+        <Tags/>
+        <ItemDescription/>
+        <PublishedFileId>0000000000</PublishedFileId>
+    </project>"""
+            xml_path = self._get_overwrite_path() / "project.xml"
+            xml_path.write_text(project_text)
 
-        # merge raid_settings.json
-        override_script_path = self._get_overwrite_path() / "scripts"
-        raid_settings_keys = [
-            "torch_settings_data_table",
-            "raid_rules_override_data_table",
-        ]
-        raid_settings = json.loads(
-            open(self._get_game_path() / "scripts" / "raid_settings.json").read()
-        )
-        mod_titles = self._organizer.modList().allModsByProfilePriority()
-        mod_titles = [
-            i
-            for i in mod_titles
-            if self._organizer.modList().state(i) & mobase.ModState.ACTIVE
-        ]
+        def merge_raid_settings():  # merge raid_settings.json
+            override_script_path = self._get_overwrite_path() / "scripts"
+            raid_settings_keys = [
+                "torch_settings_data_table",
+                "raid_rules_override_data_table",
+            ]
+            raid_settings = json.loads(open(self._get_game_path() / "scripts" / "raid_settings.json").read())
 
-        if not override_script_path.exists():
-            override_script_path.mkdir(exist_ok=True)
+            if not override_script_path.exists():
+                override_script_path.mkdir(exist_ok=True)
 
-        for mod_title in mod_titles:
-            raid_settings_file = (
-                self._get_mo_mods_path() / mod_title / "scripts" / "raid_settings.json"
-            )
-            if raid_settings_file.exists():
-                try:
-                    mod_raid_settings = json.loads(open(raid_settings_file).read())
-                except json.JSONDecodeError:
-                    continue
-                for key in raid_settings_keys:
+            for mod_title in mod_titles:
+                raid_settings_file = self._get_mo_mods_path() / mod_title / "scripts" / "raid_settings.json"
+                if raid_settings_file.exists():
                     try:
-                        raid_settings[key] += mod_raid_settings[key]
-                    except KeyError:
+                        mod_raid_settings = json.loads(open(raid_settings_file).read())
+                    except json.JSONDecodeError:
                         continue
+                    for key in raid_settings_keys:
+                        try:
+                            raid_settings[key] += mod_raid_settings[key]
+                        except KeyError:
+                            continue
 
-        open(override_script_path / "raid_settings.json", "w+").write(
-            json.dumps(raid_settings, indent=4)
-        )
+            open(override_script_path / "raid_settings.json", "w+").write(json.dumps(raid_settings, indent=4))
 
-        raid_settings_mapping = [
-            mobase.Mapping(
-                str(override_script_path / "raid_settings.json"),
-                str(self._get_game_path() / "scripts" / "raid_settings.json"),
-                False,
-                True,
-            ),
-        ]
+            raid_settings_mapping = [
+                mobase.Mapping(
+                    str(override_script_path / "raid_settings.json"),
+                    str(self._get_game_path() / "scripts" / "raid_settings.json"),
+                    False,
+                    True,
+                ),
+            ]
+            return raid_settings_mapping
 
-        # merge effect files
-        effect_mapping: List[mobase.Mapping] = []
-        effect_files: Dict[str, List[Path]] = defaultdict(list)
-        overwrite_effect_folder = self._get_overwrite_path() / "effects"
+        def merge_effect_files():  # merge effect files
+            effect_mapping: List[mobase.Mapping] = []
+            effect_files: Dict[str, List[Path]] = defaultdict(list)
+            overwrite_effect_folder = self._get_overwrite_path() / "effects"
 
-        if not overwrite_effect_folder.exists():
-            overwrite_effect_folder.mkdir()
-        else:
-            for file in overwrite_effect_folder.glob("*.effects.darkest"):
-                file.unlink()
+            if not overwrite_effect_folder.exists():
+                overwrite_effect_folder.mkdir()
+            else:
+                for file in overwrite_effect_folder.glob("*.effects.darkest"):
+                    file.unlink()
 
-        for mod_title in mod_titles:
-            for effect_file in (self._get_mo_mods_path() / mod_title / "effects").glob(
-                "*.effects.darkest"
-            ):
-                effect_files[effect_file.name].append(effect_file)
+            for mod_title in mod_titles:
+                for effect_file in (self._get_mo_mods_path() / mod_title / "effects").glob("*.effects.darkest"):
+                    effect_files[effect_file.name].append(effect_file)
 
-        for effect_file_name, files in effect_files.items():
-            if len(files) > 1:
-                contents = "\n".join([self.try_read_text(i) for i in files])
-                open(overwrite_effect_folder / f"{effect_file_name}", "w+").write(
-                    contents
-                )
-                effect_mapping.append(
-                    mobase.Mapping(
-                        str(overwrite_effect_folder / f"{effect_file_name}"),
-                        str(self._get_game_path() / "effects" / f"{effect_file_name}"),
-                        False,
-                        True,
+            for effect_file_name, files in effect_files.items():
+                if len(files) > 1:
+                    contents = "\n".join([self.try_read_text(i) for i in files])
+                    open(overwrite_effect_folder / f"{effect_file_name}", "w+").write(contents)
+                    effect_mapping.append(
+                        mobase.Mapping(
+                            str(overwrite_effect_folder / f"{effect_file_name}"),
+                            str(self._get_game_path() / "effects" / f"{effect_file_name}"),
+                            False,
+                            True,
+                        )
                     )
-                )
+            return effect_mapping
 
-        # mapping static resource files
-        static_resource_mapping: List[mobase.Mapping] = []
-        static_resource_folder = [
-            "fe_flow",
-            "fonts",
-            "localization",
-            "cursors",
-            "overlays",
-        ]
-        for mod_title in mod_titles:
-            for path in set(static_resource_folder) & set(
-                [i.name for i in (self._get_mo_mods_path() / mod_title).glob("*")]
-            ):
-                static_resource_mapping.append(
-                    mobase.Mapping(
-                        str(self._get_mo_mods_path() / mod_title / path),
-                        str(self._get_game_path() / path),
-                        True,
-                        True,
+        def merge_static_resource():  # region mapping static resource files
+            static_resource_mapping: List[mobase.Mapping] = []
+            static_resource_folder = [
+                "fe_flow",
+                "fonts",
+                "cursors",
+                "overlays",
+            ]
+            for mod_title in mod_titles:
+                for path in set(static_resource_folder) & set([i.name for i in (self._get_mo_mods_path() / mod_title).glob("*")]):
+                    static_resource_mapping.append(
+                        mobase.Mapping(
+                            str(self._get_mo_mods_path() / mod_title / path),
+                            str(self._get_game_path() / path),
+                            True,
+                            True,
+                        )
                     )
-                )
+            return static_resource_mapping
 
-        return effect_mapping + raid_settings_mapping + static_resource_mapping
+        def merge_dynamic_resource():  # region mapping static resource files
+            dynamic_resource_mapping: List[mobase.Mapping] = []
+            dynamic_resource_folder_suffix = {
+                "localization": ["loc2"],
+            }
+            for index, mod_title in enumerate(mod_titles):
+                for folder, suffixs in dynamic_resource_folder_suffix.items():
+                    for suffix in suffixs:
+                        for file in (self._get_mo_mods_path() / mod_title / folder).rglob(f"*.{suffix}"):
+                            relative_path = file.parent.relative_to(self._get_mo_mods_path() / mod_title)
+                            if file.stem.startswith(tuple([str(i) for i in range(9)])):
+                                mapping_file_name = f"{index:03d}{file.stem}.{suffix}"
+                            else:
+                                mapping_file_name = file.name
+                            dynamic_resource_mapping.append(
+                                mobase.Mapping(
+                                    str(file.absolute()),
+                                    str(self._get_game_path() / relative_path / mapping_file_name),
+                                    True,
+                                    True,
+                                )
+                            )
+                            dynamic_resource_mapping.append(
+                                mobase.Mapping(
+                                    str(file.absolute()),
+                                    str(self._get_game_path() / Path(self.GameDataPath) / relative_path / mapping_file_name),
+                                    True,
+                                    True,
+                                )
+                            )
+            return dynamic_resource_mapping
+
+        merge_xml()
+        return merge_raid_settings() + merge_effect_files() + merge_static_resource() + merge_dynamic_resource()
 
     def executables(self):
         if self.is_steam():
