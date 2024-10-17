@@ -685,8 +685,9 @@ class DarkestDungeonLocalSavegames(mobase.LocalSavegames):
     def mappings(self, profile_save_dir: QDir):
         source = profile_save_dir.absolutePath()
         destinations = [
-            f"{QStandardPaths.standardLocations(QStandardPaths.StandardLocation.DocumentsLocation)}\\Darkest",
+            f"{QStandardPaths.standardLocations(QStandardPaths.StandardLocation.DocumentsLocation)[0]}\\Darkest",
         ]
+        logger.info(f"mapping {source} to {destinations[0]}")
         return [
             mobase.Mapping(
                 source=source,
