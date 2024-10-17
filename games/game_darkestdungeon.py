@@ -21,6 +21,28 @@ from ..basic_game import BasicGame, BasicGameSaveGame
 from ..steam_utils import find_games, find_steam_path, parse_library_info
 
 logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
+
+class util:
+    def __init__(self):
+        pass
+
+    @staticmethod
+    def merge_dicts(dict1: dict[str, Any], dict2: dict[str, Any]) -> dict[str, Any]:
+        dict1_keys = set(dict1.keys())
+        dict2_keys = set(dict2.keys())
+        result = dict1.copy()
+        result.update({k: dict2[k] for k in dict2_keys - dict1_keys})
+        for key in dict1_keys & dict2_keys:
+            if key in dict2:
+                if isinstance(result[key], dict) and isinstance(dict2[key], dict):
+                    result[key] = util.merge_dicts(result[key], dict2[key])
+                elif isinstance(result[key], list) and isinstance(dict2[key], list):
+                    result[key] = result[key] + dict2[key]
+                else:
+                    result[key] = dict2[key]
+        return result
 
 
 class Meta1node:
@@ -687,7 +709,7 @@ class DarkestDungeonLocalSavegames(mobase.LocalSavegames):
         destinations = [
             f"{QStandardPaths.standardLocations(QStandardPaths.StandardLocation.DocumentsLocation)[0]}\\Darkest",
         ]
-        logger.info(f"mapping {source} to {destinations[0]}")
+        logger.debug(f"mapping {source} to {destinations[0]}")
         return [
             mobase.Mapping(
                 source=source,
@@ -1188,50 +1210,50 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
             xml_path = self._get_overwrite_path() / "project.xml"
             xml_path.write_text(project_text)
 
-        def merge_raid_settings():  # merge raid_settings.json
-            override_script_path = self._get_overwrite_path() / "scripts"
-            raid_settings_keys = [
-                "torch_settings_data_table",
-                "raid_rules_override_data_table",
-            ]
-            raid_settings = json.loads(
-                open(self._get_game_path() / "scripts" / "raid_settings.json").read()
-            )
+        # def merge_raid_settings():  # merge raid_settings.json
+        #     override_script_path = self._get_overwrite_path() / "scripts"
+        #     raid_settings_keys = [
+        #         "torch_settings_data_table",
+        #         "raid_rules_override_data_table",
+        #     ]
+        #     raid_settings = json.loads(
+        #         open(self._get_game_path() / "scripts" / "raid_settings.json").read()
+        #     )
 
-            if not override_script_path.exists():
-                override_script_path.mkdir(exist_ok=True)
+        #     if not override_script_path.exists():
+        #         override_script_path.mkdir(exist_ok=True)
 
-            for mod_title in mod_titles:
-                raid_settings_file = (
-                    self._get_mo_mods_path()
-                    / mod_title
-                    / "scripts"
-                    / "raid_settings.json"
-                )
-                if raid_settings_file.exists():
-                    try:
-                        mod_raid_settings = json.loads(open(raid_settings_file).read())
-                    except json.JSONDecodeError:
-                        continue
-                    for key in raid_settings_keys:
-                        try:
-                            raid_settings[key] += mod_raid_settings[key]
-                        except KeyError:
-                            continue
+        #     for mod_title in mod_titles:
+        #         raid_settings_file = (
+        #             self._get_mo_mods_path()
+        #             / mod_title
+        #             / "scripts"
+        #             / "raid_settings.json"
+        #         )
+        #         if raid_settings_file.exists():
+        #             try:
+        #                 mod_raid_settings = json.loads(open(raid_settings_file).read())
+        #             except json.JSONDecodeError:
+        #                 continue
+        #             for key in raid_settings_keys:
+        #                 try:
+        #                     raid_settings[key] += mod_raid_settings[key]
+        #                 except KeyError:
+        #                     continue
 
-            open(override_script_path / "raid_settings.json", "w+").write(
-                json.dumps(raid_settings, indent=4)
-            )
+        #     open(override_script_path / "raid_settings.json", "w+").write(
+        #         json.dumps(raid_settings, indent=4)
+        #     )
 
-            raid_settings_mapping = [
-                mobase.Mapping(
-                    str(override_script_path / "raid_settings.json"),
-                    str(self._get_game_path() / "scripts" / "raid_settings.json"),
-                    False,
-                    True,
-                ),
-            ]
-            return raid_settings_mapping
+        #     raid_settings_mapping = [
+        #         mobase.Mapping(
+        #             str(override_script_path / "raid_settings.json"),
+        #             str(self._get_game_path() / "scripts" / "raid_settings.json"),
+        #             False,
+        #             True,
+        #         ),
+        #     ]
+        #     return raid_settings_mapping
 
         def merge_effect_files():  # merge effect files
             effect_mapping: List[mobase.Mapping] = []
@@ -1337,13 +1359,37 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
                             )
             return dynamic_resource_mapping
 
+        def merge_json_file():  # merge json file
+            json_relative_folder = ["scripts", "raid/ai"]
+            for relative_path in json_relative_folder:
+                (self._get_overwrite_path() / relative_path).mkdir(
+                    parents=True, exist_ok=True
+                )
+                json_file_mo_files: Dict[str, List[Path]] = defaultdict(list)
+                for file in (self._get_overwrite_path() / relative_path).glob("*.json"):
+                    file.unlink()
+                for mod_title in mod_titles:
+                    for file in (
+                        self._get_mo_mods_path() / mod_title / relative_path
+                    ).glob("*.json"):
+                        json_file_mo_files[
+                            str(file.relative_to(self._get_mo_mods_path() / mod_title))
+                        ].append(file)
+                for relative_path, files in json_file_mo_files.items():
+                    if len(files) > 1:
+                        logger.debug(f"merging {files}")
+                        result = {}
+                        for file in files:
+                            result = util.merge_dicts(
+                                result, json.loads(self.try_read_text(file))
+                            )
+                        open(self._get_overwrite_path() / relative_path, "w+").write(
+                            json.dumps(result, indent=4, ensure_ascii=False)
+                        )
+
         merge_xml()
-        return (
-            merge_raid_settings()
-            + merge_effect_files()
-            + merge_static_resource()
-            + merge_dynamic_resource()
-        )
+        merge_json_file()
+        return merge_effect_files() + merge_static_resource() + merge_dynamic_resource()
 
     def executables(self):
         if self.is_steam():
