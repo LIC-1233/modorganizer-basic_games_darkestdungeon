@@ -5,6 +5,7 @@ import re
 import shutil
 import struct
 from collections import defaultdict
+from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Sequence
@@ -24,25 +25,35 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 
+@dataclass
+class regex_json_data:
+    regex: str
+    identifier: list[str]
+    file_name: str
+
+
 class util:
     def __init__(self):
         pass
 
     @staticmethod
-    def merge_dicts(dict1: dict[str, Any], dict2: dict[str, Any]) -> dict[str, Any]:
-        dict1_keys = set(dict1.keys())
-        dict2_keys = set(dict2.keys())
-        result = dict1.copy()
-        result.update({k: dict2[k] for k in dict2_keys - dict1_keys})
-        for key in dict1_keys & dict2_keys:
-            if key in dict2:
-                if isinstance(result[key], dict) and isinstance(dict2[key], dict):
-                    result[key] = util.merge_dicts(result[key], dict2[key])
-                elif isinstance(result[key], list) and isinstance(dict2[key], list):
-                    result[key] = result[key] + dict2[key]
-                else:
-                    result[key] = dict2[key]
-        return result
+    def smerge_dicts(
+        dicts: list[dict[str, list[dict[str, Any]]]], identifier: list[str]
+    ) -> dict[str, list[dict[str, Any]]] | bool:
+        result: dict[str, dict[tuple[str, ...], Any]] = defaultdict(dict)
+        for dict1 in dicts:
+            for p_key, p_list in dict1.items():
+                s_dict: dict[tuple[str, ...], Any] = {}
+                for p_value in p_list:
+                    if idf := set(identifier) & set(p_value.keys()):
+                        s_key: tuple[str, ...] = tuple(p_value[i] for i in idf)
+                    else:
+                        logger.info(f"{p_value} dont have identifier")
+                        raise ValueError(p_value, "dont have identifier")
+                        return False
+                    s_dict[s_key] = p_value
+                result[p_key].update(s_dict)
+        return {k: list(v.values()) for k, v in result.items()}
 
 
 class Meta1node:
@@ -876,6 +887,31 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
         BasicGame.__init__(self)
         mobase.IPluginFileMapper.__init__(self)
         self._organizer: mobase.IOrganizer = None  # type: ignore
+        self.sources = [
+            regex_json_data(
+                "trinkets/*rarities.trinkets.json",
+                ["id"],
+                "trinkets/0000.rarities.trinkets.json",
+            ),
+            regex_json_data(
+                "trinkets/*entries.trinkets.json",
+                ["id"],
+                "trinkets/0000.entries.trinkets.json",
+            ),
+            regex_json_data(
+                "scripts/*raid_settings.json", ["key"], "scripts/raid_settings.json"
+            ),
+            regex_json_data(
+                "raid/ai/*monster_brains.json",
+                ["id"],
+                "raid/ai/0000.monster_brains.json",
+            ),
+            regex_json_data(
+                "shared/buffs/*buffs.json",
+                ["id"],
+                "shared/buffs/0000.buffs.json",
+            ),
+        ]
 
     def local_saves_directory(self) -> List[Path]:
         self._organizer.profilePath()
@@ -901,7 +937,17 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
         self._register_feature(DarkestDungeonLocalSavegames())
         organizer.pluginList().onRefreshed(self.Refreshed)
         organizer.onAboutToRun(self.shutdown_when_steam_not_running)
+        organizer.onFinishedRun(self.remove_empty_json)
         return True
+
+    def remove_empty_json(self, exe_path: str, exit_code: int):
+        for source in self.sources:
+            for file in self._get_overwrite_path().glob(source.regex):
+                if (
+                    file.absolute()
+                    != (self._get_overwrite_path() / source.file_name).absolute()
+                ):
+                    file.unlink()
 
     def is_steam_runing(self) -> bool:
         for pid in psutil.pids():
@@ -1189,7 +1235,7 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
             if self._organizer.modList().state(i) & mobase.ModState.ACTIVE
         ]
 
-        def merge_xml():  # merge mod xml
+        def create_project_xml():  # merge mod xml
             project_text = """
     <project>
         <PreviewIconFile>preview_icon.png</PreviewIconFile>
@@ -1359,36 +1405,35 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
                             )
             return dynamic_resource_mapping
 
-        def merge_json_file():  # merge json file
-            json_relative_folder = ["scripts", "raid/ai"]
-            for relative_path in json_relative_folder:
-                (self._get_overwrite_path() / relative_path).mkdir(
-                    parents=True, exist_ok=True
-                )
-                json_file_mo_files: Dict[str, List[Path]] = defaultdict(list)
-                for file in (self._get_overwrite_path() / relative_path).glob("*.json"):
+        def merge_regex_json_file():
+            for source in self.sources:
+                logger.info(source)
+                for file in self._get_overwrite_path().glob(source.regex):
                     file.unlink()
-                for mod_title in mod_titles:
-                    for file in (
-                        self._get_mo_mods_path() / mod_title / relative_path
-                    ).glob("*.json"):
-                        json_file_mo_files[
-                            str(file.relative_to(self._get_mo_mods_path() / mod_title))
-                        ].append(file)
-                for relative_path, files in json_file_mo_files.items():
-                    if len(files) > 1:
-                        logger.debug(f"merging {files}")
-                        result = {}
-                        for file in files:
-                            result = util.merge_dicts(
-                                result, json.loads(self.try_read_text(file))
-                            )
-                        open(self._get_overwrite_path() / relative_path, "w+").write(
-                            json.dumps(result, indent=4, ensure_ascii=False)
-                        )
 
-        merge_xml()
-        merge_json_file()
+                data_list: list[dict[str, list[dict[str, Any]]]] = []
+                relative_paths: list[Path] = []
+                for mod_title in mod_titles:
+                    for file in (self._get_mo_mods_path() / mod_title).glob(
+                        source.regex
+                    ):
+                        relative_paths.append(
+                            file.relative_to(self._get_mo_mods_path() / mod_title)
+                        )
+                        data_list.append(json.loads(self.try_read_text(file)))
+                result = util.smerge_dicts(data_list, source.identifier)
+                if not result:
+                    return
+                overwrite_file = self._get_overwrite_path() / source.file_name
+                overwrite_file.parent.mkdir(parents=True, exist_ok=True)
+                for relative_path in relative_paths:
+                    file_path = self._get_overwrite_path() / relative_path
+                    file_path.parent.mkdir(parents=True, exist_ok=True)
+                    file_path.touch()
+                open(overwrite_file, "w+").write(json.dumps(result, ensure_ascii=False))
+
+        create_project_xml()
+        merge_regex_json_file()
         return merge_effect_files() + merge_static_resource() + merge_dynamic_resource()
 
     def executables(self):
