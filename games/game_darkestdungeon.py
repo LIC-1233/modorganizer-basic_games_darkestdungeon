@@ -22,7 +22,7 @@ from ..basic_game import BasicGame, BasicGameSaveGame
 from ..steam_utils import find_games, find_steam_path, parse_library_info
 
 logger = logging.getLogger()
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.DEBUG)
 
 
 @dataclass
@@ -37,23 +37,48 @@ class util:
         pass
 
     @staticmethod
-    def smerge_dicts(
-        dicts: list[dict[str, list[dict[str, Any]]]], identifier: list[str]
-    ) -> dict[str, list[dict[str, Any]]] | bool:
+    def try_read_text(file_path: Path) -> str:
+        encodings_to_try = ["gbk", "utf-8", "iso-8859-1"]
+        for encoding in encodings_to_try:
+            try:
+                return file_path.read_text(encoding=encoding)
+            except UnicodeDecodeError:
+                continue
+        raise ValueError(f"Unable to decode {file_path} with known encodings.")
+
+    @staticmethod
+    def smerge_jsons(
+        paths: list[Path], identifier: list[str]
+    ) -> dict[str, list[dict[str, Any] | list[str]]]:
         result: dict[str, dict[tuple[str, ...], Any]] = defaultdict(dict)
-        for dict1 in dicts:
+        for path in paths:
+            dict1: dict[str, list[dict[str, Any] | list[str]] | dict[str, str]] = (
+                json.loads(util.try_read_text(path))
+            )
             for p_key, p_list in dict1.items():
-                s_dict: dict[tuple[str, ...], Any] = {}
-                for p_value in p_list:
-                    if idf := set(identifier) & set(p_value.keys()):
-                        s_key: tuple[str, ...] = tuple(p_value[i] for i in idf)
-                    else:
-                        logger.info(f"{p_value} dont have identifier")
-                        raise ValueError(p_value, "dont have identifier")
-                        return False
-                    s_dict[s_key] = p_value
-                result[p_key].update(s_dict)
-        return {k: list(v.values()) for k, v in result.items()}
+                if isinstance(p_list, list):
+                    others: list[Any] = []
+                    s_dict: dict[tuple[str, ...], Any] = {}
+                    for p_value in p_list:
+                        if isinstance(p_value, dict):
+                            idf = set(identifier) & set(p_value.keys())
+                            if idf:
+                                s_key: tuple[str, ...] = tuple(p_value[i] for i in idf)
+                                s_dict[s_key] = p_value
+                            else:
+                                others.append(p_value)
+                        else:
+                            others.append(p_value)
+                    result[p_key].update(s_dict)
+                    result[p_key].update({("other",): others})
+                else:
+                    raise ValueError(
+                        f"Unexpected data type in {path} for {p_key}: {type(p_list)}"
+                    )
+        output: dict[str, list[dict[str, Any] | list[str]]] = {
+            k: list(v.values()) for k, v in result.items()
+        }
+        return output
 
 
 class Meta1node:
@@ -294,7 +319,8 @@ class persist:
         fp.seek(8, 1)
         headerLength = int.from_bytes(fp.read(4), "little")
         if headerLength != 64:
-            raise ValueError("Header Length is not 64: " + str(headerLength))
+            logger.error("Header Length is not 64: " + str(headerLength))
+            return False
         fp.seek(8, 1)
         numMeta1Entries = int.from_bytes(fp.read(4), "little")
         meta1Offset = int.from_bytes(fp.read(4), "little")
@@ -316,7 +342,8 @@ class persist:
         fp.seek(meta2Offset, 0)
         meta2DataLength = dataOffset - meta2Offset
         if meta2DataLength % 12 != 0:
-            raise ValueError("Meta2 has wrong number of bytes: " + str(meta2DataLength))
+            logger.error("Meta2 has wrong number of bytes: " + str(meta2DataLength))
+            return False
         meta2List: list[tuple[int, int, int]] = []
         for _ in range(numMeta2Entries):
             entryHash = int.from_bytes(fp.read(4), "little")
@@ -826,27 +853,32 @@ class DarkestDungeonSaveGameInfoWidget(mobase.ISaveGameInfoWidget):
         save_path = Path(save.getFilepath())
         game_data = persist.persist_parser(save_path / "persist.game.json")
         estate_data = persist.persist_parser(save_path / "persist.estate.json")
-        self.hide()
-        self._save_name.clear()
-        self._game_mode.clear()
-        self._date_time.clear()
-        self._isin_raid.clear()
-        self._save_name.setText(f"{game_data['base_root']['estatename']}")
-        if game_data["base_root"]["game_mode"] in self.GAME_MODE:
-            self._game_mode.setText(
-                f"{self.GAME_MODE[game_data['base_root']['game_mode']]}"
+        if game_data and estate_data:
+            self.hide()
+            self._save_name.clear()
+            self._game_mode.clear()
+            self._date_time.clear()
+            self._isin_raid.clear()
+            self._save_name.setText(f"{game_data['base_root']['estatename']}")
+            if game_data["base_root"]["game_mode"] in self.GAME_MODE:
+                self._game_mode.setText(
+                    f"{self.GAME_MODE[game_data['base_root']['game_mode']]}"
+                )
+            else:
+                self._game_mode.setText(f"{game_data['base_root']['game_mode']}")
+            self._date_time.setText(f"{game_data['base_root']['date_time']}")
+            self._isin_raid.setText(
+                "地牢" if game_data["base_root"]["inraid"] else "小镇"
             )
+            for v in estate_data["base_root"]["wallet"].values():
+                if v["type"] in self._estate:
+                    self._estate[v["type"]].setText(f"{v['amount']:,}")
+            self.setWindowFlags(
+                Qt.WindowType.ToolTip | Qt.WindowType.BypassGraphicsProxyWidget
+            )
+            self.show()
         else:
-            self._game_mode.setText(f"{game_data['base_root']['game_mode']}")
-        self._date_time.setText(f"{game_data['base_root']['date_time']}")
-        self._isin_raid.setText("地牢" if game_data["base_root"]["inraid"] else "小镇")
-        for v in estate_data["base_root"]["wallet"].values():
-            if v["type"] in self._estate:
-                self._estate[v["type"]].setText(f"{v['amount']:,}")
-        self.setWindowFlags(
-            Qt.WindowType.ToolTip | Qt.WindowType.BypassGraphicsProxyWidget
-        )
-        self.show()
+            self.hide()
 
 
 class DarkestDungeonSaveGameInfo(mobase.SaveGameInfo):
@@ -878,6 +910,7 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
     GameGogId = 1719198803
     GameBinary = "_windowsnosteam//darkest.exe"
     GameDataPath = r"mods\!!MOD"
+    # GameDataPath = r""
     GameSupportURL = (
         r"https://github.com/ModOrganizer2/modorganizer-basic_games/wiki/"
         "Game:-Darkest-Dungeon"
@@ -887,7 +920,7 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
         BasicGame.__init__(self)
         mobase.IPluginFileMapper.__init__(self)
         self._organizer: mobase.IOrganizer = None  # type: ignore
-        self.sources = [
+        self.merge_to_one_json = [
             regex_json_data(
                 "trinkets/*rarities.trinkets.json",
                 ["id"],
@@ -897,9 +930,6 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
                 "trinkets/*entries.trinkets.json",
                 ["id"],
                 "trinkets/0000.entries.trinkets.json",
-            ),
-            regex_json_data(
-                "scripts/*raid_settings.json", ["key"], "scripts/raid_settings.json"
             ),
             regex_json_data(
                 "raid/ai/*monster_brains.json",
@@ -912,6 +942,41 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
                 "shared/buffs/0000.buffs.json",
             ),
         ]
+        self.merge_to_one_json_necessary = self.merge_to_one_json[0:2]
+        self.merge_same_json = [
+            regex_json_data("scripts/*raid_settings.json", ["key"], ""),
+            regex_json_data(
+                "raid/ai/*monster_brains.json",
+                ["id"],
+                "",
+            ),
+            regex_json_data(
+                "campaign/quest/*quest.plot_quests.json",
+                ["id"],
+                "",
+            ),
+            regex_json_data(
+                "loot/*loot.json",
+                ["id", "difficulty", "dungeon"],
+                "",
+            ),
+            regex_json_data(
+                "shared/quirk/*quirk_library.json",
+                ["id"],
+                "",
+            ),
+            regex_json_data(
+                "shared/buffs/*buffs.json",
+                ["id"],
+                "",
+            ),
+            regex_json_data(
+                "shared/quirk/*quirk_act_outs.json",
+                ["quirk_id"],
+                "",
+            ),
+        ]
+        self.merge_same_json_necessary = self.merge_same_json[0:2]
 
     def local_saves_directory(self) -> List[Path]:
         self._organizer.profilePath()
@@ -937,11 +1002,23 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
         self._register_feature(DarkestDungeonLocalSavegames())
         organizer.pluginList().onRefreshed(self.Refreshed)
         organizer.onAboutToRun(self.shutdown_when_steam_not_running)
-        organizer.onFinishedRun(self.remove_empty_json)
+        organizer.onFinishedRun(self.clean_empty_json)
+
+        log_handler = logging.FileHandler(
+            Path(self._organizer.basePath()) / "logs" / "darkestdungeon.log",
+            mode="w+",
+            encoding="utf-8",
+        )
+        log_handler.setFormatter(
+            logging.Formatter("[%(asctime)s %(levelname)s] %(message)s")
+        )
+        log_handler.setLevel(logging.DEBUG)
+        if len(logger.handlers) <= 1:
+            logger.addHandler(log_handler)
         return True
 
-    def remove_empty_json(self, exe_path: str, exit_code: int):
-        for source in self.sources:
+    def clean_empty_json(self, exe_path: str, exit_code: int):
+        for source in self.merge_to_one_json:
             for file in self._get_overwrite_path().glob(source.regex):
                 if (
                     file.absolute()
@@ -965,16 +1042,6 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
             qCritical("Steam is not running!!!!!! RUN STEAM FIRST!!!!!!")
             return False
         return True
-
-    @staticmethod
-    def try_read_text(file_path: Path) -> str:
-        encodings_to_try = ["gbk", "utf-8", "iso-8859-1"]
-        for encoding in encodings_to_try:
-            try:
-                return file_path.read_text(encoding=encoding)
-            except UnicodeDecodeError:
-                continue
-        raise ValueError(f"Unable to decode {file_path} with known encodings.")
 
     def _get_overwrite_path(self):
         return Path(self._organizer.overwritePath())
@@ -1178,13 +1245,15 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
                 old_manifest = ""
 
             if new_manifest != old_manifest:
-                mod.setNewestVersion(
-                    mobase.VersionInfo(
-                        *xml_data.mod_xml_parser(
-                            game_workshop_path / PublishedFileId / "project.xml"
-                        ).mod_versions
+                xml_file = game_workshop_path / PublishedFileId / "project.xml"
+                if xml_file.exists():
+                    mod.setNewestVersion(
+                        mobase.VersionInfo(
+                            *xml_data.mod_xml_parser(
+                                game_workshop_path / PublishedFileId / "project.xml"
+                            ).mod_versions
+                        )
                     )
-                )
 
         # copy local mods
         for xml_file in (Path(self.gameDirectory().absolutePath()) / "mods").glob(
@@ -1202,7 +1271,7 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
                 qInfo(f"Adding mod {ascii(xml_file.parent.name)}")
                 mod_title = scopy_mod(xml_file.parent, mo_mod_folder)
                 mo_mod_folder = mo_mod_path / mod_title
-                (xml_file.parent / f"l{id}.manifest").write_text("")
+                (xml_file.parent / f"l{id}.manifest").write_text("", encoding="utf-8")
                 qInfo(f"Added mod {ascii(xml_file.parent.name)}")
             else:
                 continue
@@ -1224,9 +1293,11 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
             (mo_mod_folder / "project_file").mkdir(exist_ok=True)
             if xml_file.exists():
                 xml_file.rename(xml_file.parent / "project_file" / f"{id}.xml")
-                open(xml_file.parent / "project_file" / f"l{id}.manifest", "w+").write(
-                    ""
-                )
+                open(
+                    xml_file.parent / "project_file" / f"l{id}.manifest",
+                    "w+",
+                    encoding="utf-8",
+                ).write("")
 
     def mappings(self) -> List[mobase.Mapping]:
         mod_titles = [
@@ -1256,53 +1327,7 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
             xml_path = self._get_overwrite_path() / "project.xml"
             xml_path.write_text(project_text)
 
-        # def merge_raid_settings():  # merge raid_settings.json
-        #     override_script_path = self._get_overwrite_path() / "scripts"
-        #     raid_settings_keys = [
-        #         "torch_settings_data_table",
-        #         "raid_rules_override_data_table",
-        #     ]
-        #     raid_settings = json.loads(
-        #         open(self._get_game_path() / "scripts" / "raid_settings.json").read()
-        #     )
-
-        #     if not override_script_path.exists():
-        #         override_script_path.mkdir(exist_ok=True)
-
-        #     for mod_title in mod_titles:
-        #         raid_settings_file = (
-        #             self._get_mo_mods_path()
-        #             / mod_title
-        #             / "scripts"
-        #             / "raid_settings.json"
-        #         )
-        #         if raid_settings_file.exists():
-        #             try:
-        #                 mod_raid_settings = json.loads(open(raid_settings_file).read())
-        #             except json.JSONDecodeError:
-        #                 continue
-        #             for key in raid_settings_keys:
-        #                 try:
-        #                     raid_settings[key] += mod_raid_settings[key]
-        #                 except KeyError:
-        #                     continue
-
-        #     open(override_script_path / "raid_settings.json", "w+").write(
-        #         json.dumps(raid_settings, indent=4)
-        #     )
-
-        #     raid_settings_mapping = [
-        #         mobase.Mapping(
-        #             str(override_script_path / "raid_settings.json"),
-        #             str(self._get_game_path() / "scripts" / "raid_settings.json"),
-        #             False,
-        #             True,
-        #         ),
-        #     ]
-        #     return raid_settings_mapping
-
         def merge_effect_files():  # merge effect files
-            effect_mapping: List[mobase.Mapping] = []
             effect_files: Dict[str, List[Path]] = defaultdict(list)
             overwrite_effect_folder = self._get_overwrite_path() / "effects"
 
@@ -1320,25 +1345,14 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
 
             for effect_file_name, files in effect_files.items():
                 if len(files) > 1:
-                    contents = "\n".join([self.try_read_text(i) for i in files])
-                    open(overwrite_effect_folder / f"{effect_file_name}", "w+").write(
-                        contents
-                    )
-                    effect_mapping.append(
-                        mobase.Mapping(
-                            str(overwrite_effect_folder / f"{effect_file_name}"),
-                            str(
-                                self._get_game_path()
-                                / "effects"
-                                / f"{effect_file_name}"
-                            ),
-                            False,
-                            True,
-                        )
-                    )
-            return effect_mapping
+                    contents = "\n".join([util.try_read_text(i) for i in files])
+                    open(
+                        overwrite_effect_folder / f"{effect_file_name}",
+                        "w+",
+                        encoding="utf-8",
+                    ).write(contents)
 
-        def merge_static_resource():  # region mapping static resource files
+        def preload_static_resource():  # region mapping static resource files
             static_resource_mapping: List[mobase.Mapping] = []
             static_resource_folder = [
                 "fe_flow",
@@ -1360,7 +1374,7 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
                     )
             return static_resource_mapping
 
-        def merge_dynamic_resource():  # region mapping static resource files
+        def preload_dynamic_resource():  # region mapping static resource files
             dynamic_resource_mapping: List[mobase.Mapping] = []
             dynamic_resource_folder_suffix = {
                 "localization": ["loc2"],
@@ -1405,36 +1419,77 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
                             )
             return dynamic_resource_mapping
 
-        def merge_regex_json_file():
-            for source in self.sources:
-                logger.info(source)
+        def merge_same_json_file():
+            for source in self.merge_same_json:
                 for file in self._get_overwrite_path().glob(source.regex):
                     file.unlink()
-
-                data_list: list[dict[str, list[dict[str, Any]]]] = []
-                relative_paths: list[Path] = []
+            for source in self.merge_same_json_necessary:
+                relative_path_file: dict[Path, list[Path]] = defaultdict(list)
                 for mod_title in mod_titles:
                     for file in (self._get_mo_mods_path() / mod_title).glob(
                         source.regex
                     ):
+                        relative_path_file[
+                            file.relative_to(self._get_mo_mods_path() / mod_title)
+                        ].append(file)
+                for relative_path, files in relative_path_file.items():
+                    if len(files) > 1:
+                        logger.debug(f"merge {relative_path}")
+                        result = util.smerge_jsons(files, source.identifier)
+                        if not result:
+                            logger.error(f"Failed to merge {relative_path}")
+                            continue
+                        overwrite_file = self._get_overwrite_path() / relative_path
+                        overwrite_file.parent.mkdir(parents=True, exist_ok=True)
+                        open(overwrite_file, "w+", encoding="utf-8").write(
+                            json.dumps(result, ensure_ascii=False)
+                        )
+
+        def merge_regex_json_file():
+            for source in self.merge_to_one_json:
+                for file in self._get_overwrite_path().glob(source.regex):
+                    file.unlink()
+            for source in self.merge_to_one_json_necessary:
+                all_regex_files: list[Path] = []
+                # data_list: list[dict[str, list[dict[str, Any]]]] = []
+                relative_paths: list[Path] = []
+                for mod_title in mod_titles:
+                    regex_files = (self._get_mo_mods_path() / mod_title).glob(
+                        source.regex
+                    )
+                    all_regex_files += regex_files
+                    for file in regex_files:
                         relative_paths.append(
                             file.relative_to(self._get_mo_mods_path() / mod_title)
                         )
-                        data_list.append(json.loads(self.try_read_text(file)))
-                result = util.smerge_dicts(data_list, source.identifier)
+                result = util.smerge_jsons(
+                    all_regex_files,
+                    source.identifier,
+                )
                 if not result:
-                    return
+                    logger.error(f"Failed to merge {source.file_name}")
+                    continue
                 overwrite_file = self._get_overwrite_path() / source.file_name
                 overwrite_file.parent.mkdir(parents=True, exist_ok=True)
                 for relative_path in relative_paths:
                     file_path = self._get_overwrite_path() / relative_path
                     file_path.parent.mkdir(parents=True, exist_ok=True)
                     file_path.touch()
-                open(overwrite_file, "w+").write(json.dumps(result, ensure_ascii=False))
+                open(overwrite_file, "w+", encoding="utf-8").write(
+                    json.dumps(result, ensure_ascii=False)
+                )
 
+        logger.debug("create_project_xml start...")
         create_project_xml()
+        logger.debug("create_project_xml end")
+        logger.debug("merge_regex_json_file start...")
         merge_regex_json_file()
-        return merge_effect_files() + merge_static_resource() + merge_dynamic_resource()
+        logger.debug("merge_regex_json_file end")
+        logger.debug("merge_same_json_file start...")
+        merge_same_json_file()
+        logger.debug("merge_same_json_file end")
+        merge_effect_files()
+        return preload_static_resource() + preload_dynamic_resource()
 
     def executables(self):
         if self.is_steam():
