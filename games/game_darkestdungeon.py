@@ -14,7 +14,7 @@ from xml.etree.ElementTree import Element
 
 import mobase
 import psutil
-from PyQt6.QtCore import QDir, QFileInfo, QStandardPaths, Qt, qCritical, qInfo
+from PyQt6.QtCore import QDir, QFileInfo, QStandardPaths, Qt
 from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
@@ -47,6 +47,23 @@ class util:
         raise ValueError(f"Unable to decode {file_path} with known encodings.")
 
     @staticmethod
+    def acf_parser(
+        acf_file: str | Path,
+    ) -> Dict[str, Dict[str, Dict[str, Dict[str, str]]]]:
+        try:
+            acf_content = open(acf_file, encoding="utf-8").read()
+            acf_content = re.sub(r'(".*?")\t*', r"\g<1>:", acf_content)
+            acf_content = "{" + acf_content + "}"
+            acf_content = re.sub(r':(\n\t*")', r",\g<1>", acf_content)
+            acf_content = re.sub(r":(\n\t*\})", r",\g<1>", acf_content)
+            acf_content = re.sub(r"\}", r"},", acf_content)
+            acf_content = re.sub(r",(\n\t*\})", r"\g<1>", acf_content)
+            acf_content = acf_content.strip(",")
+            return json.loads(acf_content)
+        except Exception as e:
+            raise ValueError(f"failed to parse acf {acf_file}") from e
+
+    @staticmethod
     def smerge_jsons(
         paths: list[Path], identifier: list[str]
     ) -> dict[str, list[dict[str, Any] | list[str]]]:
@@ -70,7 +87,9 @@ class util:
                         else:
                             others.append(p_value)
                     result[p_key].update(s_dict)
-                    result[p_key].update({("other",): others})
+                    result[p_key].update(
+                        {(f"other_{index}",): i for index, i in enumerate(others)}
+                    )
                 else:
                     raise ValueError(
                         f"Unexpected data type in {path} for {p_key}: {type(p_list)}"
@@ -79,6 +98,18 @@ class util:
             k: list(v.values()) for k, v in result.items()
         }
         return output
+
+    @staticmethod
+    def scopy_mod(scr: str | Path, dst: str | Path) -> str:  # type: ignore
+        scr = str(scr)
+        dst = str(dst)
+        if not Path(scr).exists():
+            return ""
+        if Path(dst).exists():
+            return util.scopy_mod(scr, f"{dst}_copy")  # type: ignore
+        else:
+            shutil.copytree(scr, dst)
+            return dst
 
 
 class Meta1node:
@@ -976,7 +1007,7 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
                 "",
             ),
         ]
-        self.merge_same_json_necessary = self.merge_same_json[0:2]
+        self.merge_same_json_necessary = self.merge_same_json
 
     def local_saves_directory(self) -> List[Path]:
         self._organizer.profilePath()
@@ -1004,6 +1035,7 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
         organizer.onAboutToRun(self.shutdown_when_steam_not_running)
         organizer.onFinishedRun(self.clean_empty_json)
 
+        (Path(self._organizer.basePath()) / "logs").mkdir(parents=True, exist_ok=True)
         log_handler = logging.FileHandler(
             Path(self._organizer.basePath()) / "logs" / "darkestdungeon.log",
             mode="w+",
@@ -1023,8 +1055,9 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
                 if (
                     file.absolute()
                     != (self._get_overwrite_path() / source.file_name).absolute()
-                ):
+                ) and file.stat().st_size == 0:
                     file.unlink()
+                    logger.debug(f"unlink {file}")
 
     def is_steam_runing(self) -> bool:
         for pid in psutil.pids():
@@ -1039,7 +1072,9 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
         self, file: str, location: QDir, arguments: str
     ) -> bool:
         if not self.is_steam_runing() and Path(file).name == "darkest.exe":
-            qCritical("Steam is not running!!!!!! RUN STEAM FIRST!!!!!!")
+            raise OSError(
+                "Steam 没有运行！ 先运行Steam！\nSteam is not running! RUN STEAM FIRST!"
+            )
             return False
         return True
 
@@ -1049,7 +1084,8 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
     def _get_game_path(self):
         return Path(self.gameDirectory().absolutePath())
 
-    def _get_game_workshop_path(self):
+    def _get_workshop_path(self):
+        workshop_paths: list[Path] = []
         steam_path = find_steam_path()
         if steam_path is not None:
             library_folders = parse_library_info(
@@ -1063,43 +1099,33 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
                     / "appworkshop_262060.acf"
                 )
                 if acf_file.exists():
-                    return library_folder.path / "steamapps" / "workshop"
-        return find_games()["262060"].parent.parent / "workshop"
+                    workshop_paths.append(
+                        library_folder.path / "steamapps" / "workshop"
+                    )
+        else:
+            workshop_paths.append(find_games()["262060"].parent.parent / "workshop")
+        logger.debug(f"Found {len(workshop_paths)} workshop: {workshop_paths}")
+        return workshop_paths
 
     def _get_mo_mods_path(self):
         return Path(self._organizer.modsPath())
 
     def Refreshed(self):
-        def acf_parser(
-            acf_file: str | Path,
-        ) -> Dict[str, Dict[str, Dict[str, Dict[str, str]]]]:
-            try:
-                acf_content = open(acf_file, encoding="utf-8").read()
-                acf_content = re.sub(r'(".*?")\t*', r"\g<1>:", acf_content)
-                acf_content = "{" + acf_content + "}"
-                acf_content = re.sub(r':(\n\t*")', r",\g<1>", acf_content)
-                acf_content = re.sub(r":(\n\t*\})", r",\g<1>", acf_content)
-                acf_content = re.sub(r"\}", r"},", acf_content)
-                acf_content = re.sub(r",(\n\t*\})", r"\g<1>", acf_content)
-                acf_content = acf_content.strip(",")
-                return json.loads(acf_content)
-            except Exception as e:
-                raise ValueError(f"failed to parse acf {acf_file}") from e
-
-        def scopy_mod(scr: str | Path, dst: str | Path) -> str:  # type: ignore
-            scr = str(scr)
-            dst = str(dst)
-            if not Path(scr).exists():
-                return ""
-            if Path(dst).exists():
-                return scopy_mod(scr, f"{dst}_copy")  # type: ignore
+        logger.info("refreshing")
+        workshop_path_workshop_items: Dict[Path, Dict[str, Dict[str, str]]] = {}
+        for workshop_path in self._get_workshop_path():
+            acf_path = workshop_path / "appworkshop_262060.acf"
+            if acf_path.exists():
+                workshop_path_workshop_items[workshop_path] = util.acf_parser(acf_path)[
+                    "AppWorkshop"
+                ]["WorkshopItemDetails"]
+                logger.debug(
+                    f"found {len(workshop_path_workshop_items[workshop_path])} mod-records in {workshop_path}"
+                )
             else:
-                shutil.copytree(scr, dst)
-                return dst
-
-        qInfo("refreshing")
-        acf_path = self._get_game_workshop_path() / "appworkshop_262060.acf"
-        workshop_items = acf_parser(acf_path)["AppWorkshop"]["WorkshopItemDetails"]
+                logger.debug(f"darkest_dungeon acf file not exist in {workshop_path}")
+        # acf_path = self._get_workshop_path() / "appworkshop_262060.acf"
+        # workshop_items: Dict[str, Dict[str, str]] = acf_parser(acf_path)["AppWorkshop"]["WorkshopItemDetails"]
         mod_list = self._organizer.modList()
         mod_names = mod_list.allMods()
         mo_mod_path = Path(self._organizer.modsPath())
@@ -1107,6 +1133,7 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
             str(i.stem.strip("w")): mod_list.getMod(str(i.parent.parent.name))
             for i in mo_mod_path.glob("*/project_file/w*.manifest")
         }
+        logger.debug(f"found {len(mo_workshop_PublishedFileId)} workshop mods in mo2")
         mo_local_PublishedFileId: Dict[str, mobase.IModInterface] = {
             str(i.stem.strip("l")): mod_list.getMod(str(i.parent.parent.name))
             for i in mo_mod_path.glob("*/project_file/l*.manifest")
@@ -1178,82 +1205,104 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
 
         # copy steam workshop mods
         # 使用mod_PublishedFileId保证唯一，可能会出现本地mod占用的问题
-        game_workshop_path = self._get_game_workshop_path() / "content" / "262060"
-        for PublishedFileId in set([i for i in workshop_items.keys()]) - set(
-            [i for i in mo_workshop_PublishedFileId.keys()]
-        ):
-            xml_file = game_workshop_path / PublishedFileId / "project.xml"
-            if not xml_file.exists():
-                continue
-            mod_title = xml_data.mod_xml_parser(xml_file).mod_title
-            qInfo(f"Adding workshop mod {ascii(mod_title)}")
-            if mod_title := scopy_mod(
-                game_workshop_path / PublishedFileId, mo_mod_path / mod_title
+        # game_workshop_path = self._get_workshop_path() / "content" / "262060"
+        for game_workshop_path, workshop_items in workshop_path_workshop_items.items():
+            for PublishedFileId in set(workshop_items.keys()) - set(
+                mo_workshop_PublishedFileId
             ):
-                mo_mod_folder = mo_mod_path / mod_title
-                log_file = mo_mod_folder / "steam_workshop_uploader.log"
-                txt_file = mo_mod_folder / "modfiles.txt"
-                xml_file = mo_mod_folder / "project.xml"
-                preview_file = mo_mod_folder / "preview_icon.png"
-                manifest_file = (
-                    mo_mod_folder / "project_file" / f"w{PublishedFileId}.manifest"
+                xml_file = (
+                    game_workshop_path
+                    / "content"
+                    / "262060"
+                    / PublishedFileId
+                    / "project.xml"
                 )
-
-                (mo_mod_folder / "preview_file").mkdir(exist_ok=True)
-                (mo_mod_folder / "project_file").mkdir(exist_ok=True)
-
-                if txt_file.exists():
-                    txt_file.unlink()
-                if log_file.exists():
-                    log_file.unlink()
-
-                if preview_file.exists():
-                    preview_file.rename(
-                        mo_mod_folder / "preview_file" / f"{PublishedFileId}.png"
+                if not xml_file.exists():
+                    logger.debug(
+                        f"worshop mod Id {PublishedFileId} not found in {game_workshop_path}"
+                    )
+                    continue
+                mod_title = xml_data.mod_xml_parser(xml_file).mod_title
+                logger.info(f"Adding workshop mod {mod_title}")
+                if mod_title := util.scopy_mod(
+                    game_workshop_path / "content" / "262060" / PublishedFileId,
+                    mo_mod_path / mod_title,
+                ):
+                    mo_mod_folder = mo_mod_path / mod_title
+                    log_file = mo_mod_folder / "steam_workshop_uploader.log"
+                    txt_file = mo_mod_folder / "modfiles.txt"
+                    xml_file = mo_mod_folder / "project.xml"
+                    preview_file = mo_mod_folder / "preview_icon.png"
+                    manifest_file = (
+                        mo_mod_folder / "project_file" / f"w{PublishedFileId}.manifest"
                     )
 
-                if xml_file.exists():
-                    xml_file.rename(
-                        mo_mod_folder / "project_file" / f"{PublishedFileId}.xml"
-                    )
-                    manifest_file.write_text(
-                        workshop_items[PublishedFileId]["manifest"]
-                    )
+                    (mo_mod_folder / "preview_file").mkdir(exist_ok=True)
+                    (mo_mod_folder / "project_file").mkdir(exist_ok=True)
 
-            else:
-                qInfo(f"Failed to add mod {ascii(mod_title)}")
-            qInfo(f"Added mod {ascii(mod_title)}")
+                    if txt_file.exists():
+                        txt_file.unlink()
+                    if log_file.exists():
+                        log_file.unlink()
+
+                    if preview_file.exists():
+                        preview_file.rename(
+                            mo_mod_folder / "preview_file" / f"{PublishedFileId}.png"
+                        )
+
+                    if xml_file.exists():
+                        xml_file.rename(
+                            mo_mod_folder / "project_file" / f"{PublishedFileId}.xml"
+                        )
+                        manifest_file.write_text(
+                            workshop_items[PublishedFileId]["manifest"]
+                        )
+
+                else:
+                    logger.info(f"Failed to add mod {mod_title}")
+                logger.info(f"Added mod {mod_title}")
 
         # check upgrade
-        for PublishedFileId in set([i for i in workshop_items.keys()]) & set(
-            [i for i in mo_workshop_PublishedFileId]
-        ):
-            mod = mo_workshop_PublishedFileId[PublishedFileId]
-            if not mod:
-                continue
+        for game_workshop_path, workshop_items in workshop_path_workshop_items.items():
+            for PublishedFileId in set([i for i in workshop_items.keys()]) & set(
+                [i for i in mo_workshop_PublishedFileId]
+            ):
+                mod = mo_workshop_PublishedFileId[PublishedFileId]
+                if not mod:
+                    continue
 
-            old_manifest_file = (
-                Path(mod.absolutePath())
-                / "project_file"
-                / f"w{PublishedFileId}.manifest"
-            )
+                old_manifest_file = (
+                    Path(mod.absolutePath())
+                    / "project_file"
+                    / f"w{PublishedFileId}.manifest"
+                )
 
-            new_manifest = workshop_items[PublishedFileId]["manifest"]
-            if old_manifest_file.exists():
-                old_manifest = old_manifest_file.read_text()
-            else:
-                old_manifest = ""
+                new_manifest = workshop_items[PublishedFileId]["manifest"]
+                if old_manifest_file.exists():
+                    old_manifest = old_manifest_file.read_text()
+                else:
+                    old_manifest = ""
 
-            if new_manifest != old_manifest:
-                xml_file = game_workshop_path / PublishedFileId / "project.xml"
-                if xml_file.exists():
-                    mod.setNewestVersion(
-                        mobase.VersionInfo(
-                            *xml_data.mod_xml_parser(
-                                game_workshop_path / PublishedFileId / "project.xml"
-                            ).mod_versions
-                        )
+                if new_manifest != old_manifest:
+                    xml_file = (
+                        game_workshop_path
+                        / "content"
+                        / "262060"
+                        / PublishedFileId
+                        / "project.xml"
                     )
+                    if xml_file.exists():
+                        mod.setNewestVersion(
+                            mobase.VersionInfo(
+                                *xml_data.mod_xml_parser(
+                                    game_workshop_path
+                                    / "content"
+                                    / "262060"
+                                    / PublishedFileId
+                                    / "project.xml"
+                                ).mod_versions
+                            )
+                        )
 
         # copy local mods
         for xml_file in (Path(self.gameDirectory().absolutePath()) / "mods").glob(
@@ -1268,11 +1317,11 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
             if not mod_PublishedFileIds or not set(mod_PublishedFileIds) & set(
                 mo_local_PublishedFileId.keys()
             ):
-                qInfo(f"Adding mod {ascii(xml_file.parent.name)}")
-                mod_title = scopy_mod(xml_file.parent, mo_mod_folder)
+                logger.info(f"Adding mod {xml_file.parent.name}")
+                mod_title = util.scopy_mod(xml_file.parent, mo_mod_folder)
                 mo_mod_folder = mo_mod_path / mod_title
                 (xml_file.parent / f"l{id}.manifest").write_text("", encoding="utf-8")
-                qInfo(f"Added mod {ascii(xml_file.parent.name)}")
+                logger.info(f"Added mod {xml_file.parent.name}")
             else:
                 continue
 
@@ -1475,9 +1524,11 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
                     file_path = self._get_overwrite_path() / relative_path
                     file_path.parent.mkdir(parents=True, exist_ok=True)
                     file_path.touch()
+                    logger.debug(f"touch {file_path}")
                 open(overwrite_file, "w+", encoding="utf-8").write(
                     json.dumps(result, ensure_ascii=False)
                 )
+                logger.debug(f"merge regex json file {overwrite_file}")
 
         logger.debug("create_project_xml start...")
         create_project_xml()
