@@ -19,7 +19,7 @@ pyqt6 = "6.7.0"
 mobase-stubs = { version = "^2.5.1a0", allow-prereleases = true }
 pyqt6 = "^6.7.0"
 pyright = "^1.1.365"
-ruff = "^0.2.1"
+ruff = "^0.7.0"
 types-psutil = "^5.9.5.20240516"
 poethepoet = "^0.23.0"
 
