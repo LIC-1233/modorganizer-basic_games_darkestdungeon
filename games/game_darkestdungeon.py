@@ -14,6 +14,7 @@ from xml.etree.ElementTree import Element
 
 import mobase
 import psutil
+import vdf
 from PyQt6.QtCore import QDir, QFileInfo, QStandardPaths, Qt
 from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
@@ -47,23 +48,6 @@ class util:
         raise ValueError(f"Unable to decode {file_path} with known encodings.")
 
     @staticmethod
-    def acf_parser(
-        acf_file: str | Path,
-    ) -> Dict[str, Dict[str, Dict[str, Dict[str, str]]]]:
-        try:
-            acf_content = open(acf_file, encoding="utf-8").read()
-            acf_content = re.sub(r'(".*?")\t*', r"\g<1>:", acf_content)
-            acf_content = "{" + acf_content + "}"
-            acf_content = re.sub(r':(\n\t*")', r",\g<1>", acf_content)
-            acf_content = re.sub(r":(\n\t*\})", r",\g<1>", acf_content)
-            acf_content = re.sub(r"\}", r"},", acf_content)
-            acf_content = re.sub(r",(\n\t*\})", r"\g<1>", acf_content)
-            acf_content = acf_content.strip(",")
-            return json.loads(acf_content)
-        except Exception as e:
-            raise ValueError(f"failed to parse acf {acf_file}") from e
-
-    @staticmethod
     def smerge_jsons(
         paths: list[Path], identifier: list[str]
     ) -> dict[str, list[dict[str, Any] | list[str]]]:
@@ -87,9 +71,9 @@ class util:
                         else:
                             others.append(p_value)
                     result[p_key].update(s_dict)
-                    result[p_key].update(
-                        {(f"other_{index}",): i for index, i in enumerate(others)}
-                    )
+                    result[p_key].update({
+                        (f"other_{index}",): i for index, i in enumerate(others)
+                    })
                 else:
                     raise ValueError(
                         f"Unexpected data type in {path} for {p_key}: {type(p_list)}"
@@ -1116,7 +1100,7 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
         for workshop_path in self._get_workshop_path():
             acf_path = workshop_path / "appworkshop_262060.acf"
             if acf_path.exists():
-                workshop_path_workshop_items[workshop_path] = util.acf_parser(acf_path)[
+                workshop_path_workshop_items[workshop_path] = vdf.load(open(acf_path))[
                     "AppWorkshop"
                 ]["WorkshopItemDetails"]
                 logger.debug(
@@ -1124,8 +1108,6 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
                 )
             else:
                 logger.debug(f"darkest_dungeon acf file not exist in {workshop_path}")
-        # acf_path = self._get_workshop_path() / "appworkshop_262060.acf"
-        # workshop_items: Dict[str, Dict[str, str]] = acf_parser(acf_path)["AppWorkshop"]["WorkshopItemDetails"]
         mod_list = self._organizer.modList()
         mod_names = mod_list.allMods()
         mo_mod_path = Path(self._organizer.modsPath())
@@ -1264,9 +1246,9 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
 
         # check upgrade
         for game_workshop_path, workshop_items in workshop_path_workshop_items.items():
-            for PublishedFileId in set([i for i in workshop_items.keys()]) & set(
-                [i for i in mo_workshop_PublishedFileId]
-            ):
+            for PublishedFileId in set([i for i in workshop_items.keys()]) & set([
+                i for i in mo_workshop_PublishedFileId
+            ]):
                 mod = mo_workshop_PublishedFileId[PublishedFileId]
                 if not mod:
                     continue
@@ -1410,9 +1392,9 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
                 "overlays",
             ]
             for mod_title in mod_titles:
-                for path in set(static_resource_folder) & set(
-                    [i.name for i in (self._get_mo_mods_path() / mod_title).glob("*")]
-                ):
+                for path in set(static_resource_folder) & set([
+                    i.name for i in (self._get_mo_mods_path() / mod_title).glob("*")
+                ]):
                     static_resource_mapping.append(
                         mobase.Mapping(
                             str(self._get_mo_mods_path() / mod_title / path),
