@@ -14,7 +14,7 @@ from xml.etree.ElementTree import Element
 
 import mobase
 import psutil
-import vdf
+import vdf  # type: ignore
 from PyQt6.QtCore import QDir, QFileInfo, QStandardPaths, Qt
 from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
@@ -1100,7 +1100,7 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
         for workshop_path in self._get_workshop_path():
             acf_path = workshop_path / "appworkshop_262060.acf"
             if acf_path.exists():
-                workshop_path_workshop_items[workshop_path] = vdf.load(open(acf_path))[
+                workshop_path_workshop_items[workshop_path] = vdf.load(open(acf_path))[  # type: ignore
                     "AppWorkshop"
                 ]["WorkshopItemDetails"]
                 logger.debug(
