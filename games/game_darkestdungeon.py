@@ -71,9 +71,9 @@ class util:
                         else:
                             others.append(p_value)
                     result[p_key].update(s_dict)
-                    result[p_key].update({
-                        (f"other_{index}",): i for index, i in enumerate(others)
-                    })
+                    result[p_key].update(
+                        {(f"other_{index}",): i for index, i in enumerate(others)}
+                    )
                 else:
                     raise ValueError(
                         f"Unexpected data type in {path} for {p_key}: {type(p_list)}"
@@ -1246,9 +1246,9 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
 
         # check upgrade
         for game_workshop_path, workshop_items in workshop_path_workshop_items.items():
-            for PublishedFileId in set([i for i in workshop_items.keys()]) & set([
-                i for i in mo_workshop_PublishedFileId
-            ]):
+            for PublishedFileId in set([i for i in workshop_items.keys()]) & set(
+                [i for i in mo_workshop_PublishedFileId]
+            ):
                 mod = mo_workshop_PublishedFileId[PublishedFileId]
                 if not mod:
                     continue
@@ -1392,9 +1392,9 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
                 "overlays",
             ]
             for mod_title in mod_titles:
-                for path in set(static_resource_folder) & set([
-                    i.name for i in (self._get_mo_mods_path() / mod_title).glob("*")
-                ]):
+                for path in set(static_resource_folder) & set(
+                    [i.name for i in (self._get_mo_mods_path() / mod_title).glob("*")]
+                ):
                     static_resource_mapping.append(
                         mobase.Mapping(
                             str(self._get_mo_mods_path() / mod_title / path),
