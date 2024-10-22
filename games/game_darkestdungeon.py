@@ -14,6 +14,7 @@ from xml.etree.ElementTree import Element
 
 import mobase
 import psutil
+import vdf  # type: ignore
 from PyQt6.QtCore import QDir, QFileInfo, QStandardPaths, Qt
 from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
@@ -45,23 +46,6 @@ class util:
             except UnicodeDecodeError:
                 continue
         raise ValueError(f"Unable to decode {file_path} with known encodings.")
-
-    @staticmethod
-    def acf_parser(
-        acf_file: str | Path,
-    ) -> Dict[str, Dict[str, Dict[str, Dict[str, str]]]]:
-        try:
-            acf_content = open(acf_file, encoding="utf-8").read()
-            acf_content = re.sub(r'(".*?")\t*', r"\g<1>:", acf_content)
-            acf_content = "{" + acf_content + "}"
-            acf_content = re.sub(r':(\n\t*")', r",\g<1>", acf_content)
-            acf_content = re.sub(r":(\n\t*\})", r",\g<1>", acf_content)
-            acf_content = re.sub(r"\}", r"},", acf_content)
-            acf_content = re.sub(r",(\n\t*\})", r"\g<1>", acf_content)
-            acf_content = acf_content.strip(",")
-            return json.loads(acf_content)
-        except Exception as e:
-            raise ValueError(f"failed to parse acf {acf_file}") from e
 
     @staticmethod
     def smerge_jsons(
@@ -1116,7 +1100,7 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
         for workshop_path in self._get_workshop_path():
             acf_path = workshop_path / "appworkshop_262060.acf"
             if acf_path.exists():
-                workshop_path_workshop_items[workshop_path] = util.acf_parser(acf_path)[
+                workshop_path_workshop_items[workshop_path] = vdf.load(open(acf_path))[  # type: ignore
                     "AppWorkshop"
                 ]["WorkshopItemDetails"]
                 logger.debug(
@@ -1124,8 +1108,6 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
                 )
             else:
                 logger.debug(f"darkest_dungeon acf file not exist in {workshop_path}")
-        # acf_path = self._get_workshop_path() / "appworkshop_262060.acf"
-        # workshop_items: Dict[str, Dict[str, str]] = acf_parser(acf_path)["AppWorkshop"]["WorkshopItemDetails"]
         mod_list = self._organizer.modList()
         mod_names = mod_list.allMods()
         mo_mod_path = Path(self._organizer.modsPath())
