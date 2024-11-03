@@ -53,31 +53,40 @@ class util:
     ) -> dict[str, list[dict[str, Any] | list[str]]]:
         result: dict[str, dict[tuple[str, ...], Any]] = defaultdict(dict)
         for path in paths:
-            dict1: dict[str, list[dict[str, Any] | list[str]] | dict[str, str]] = (
-                json.loads(util.try_read_text(path))
-            )
-            for p_key, p_list in dict1.items():
-                if isinstance(p_list, list):
-                    others: list[Any] = []
-                    s_dict: dict[tuple[str, ...], Any] = {}
-                    for p_value in p_list:
-                        if isinstance(p_value, dict):
-                            idf = set(identifier) & set(p_value.keys())
-                            if idf:
-                                s_key: tuple[str, ...] = tuple(p_value[i] for i in idf)
-                                s_dict[s_key] = p_value
+            result_temp: dict[str, dict[tuple[str, ...], Any]] = defaultdict(dict)
+            try:
+                dict1: dict[str, list[dict[str, Any] | list[str]] | dict[str, str]] = (
+                    json.loads(util.try_read_text(path))
+                )
+                for p_key, p_list in dict1.items():
+                    if isinstance(p_list, list):
+                        others: list[Any] = []
+                        s_dict: dict[tuple[str, ...], Any] = {}
+                        for p_value in p_list:
+                            if isinstance(p_value, dict):
+                                idf = set(identifier) & set(p_value.keys())
+                                if idf:
+                                    s_key: tuple[str, ...] = tuple(
+                                        p_value[i] for i in idf
+                                    )
+                                    s_dict[s_key] = p_value
+                                else:
+                                    others.append(p_value)
                             else:
                                 others.append(p_value)
-                        else:
-                            others.append(p_value)
-                    result[p_key].update(s_dict)
-                    result[p_key].update(
-                        {(f"other_{index}",): i for index, i in enumerate(others)}
-                    )
-                else:
-                    raise ValueError(
-                        f"Unexpected data type in {path} for {p_key}: {type(p_list)}"
-                    )
+                        result_temp[p_key].update(s_dict)
+                        result_temp[p_key].update(
+                            {(f"other_{index}",): i for index, i in enumerate(others)}
+                        )
+                    else:
+                        raise ValueError(
+                            f"Unexpected data type in {path} for {p_key}: {type(p_list)}"
+                        )
+            except Exception as e:
+                logger.error(f"Error in {path}: {e}")
+                continue
+            result.update(result_temp)
+
         output: dict[str, list[dict[str, Any] | list[str]]] = {
             k: list(v.values()) for k, v in result.items()
         }
