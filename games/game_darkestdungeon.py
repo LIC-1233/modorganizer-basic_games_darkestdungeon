@@ -529,33 +529,34 @@ class xml_data:
         mod_tags: List[str] = []
         mod_description: str = ""
         mod_PublishedFileId: str = ""
-        tree = ET.parse(xml_file)
-        if not tree:
-            return cls(
-                mod_title, mod_versions, mod_tags, mod_description, mod_PublishedFileId
+        try:
+            tree = ET.fromstring(
+                Path(xml_file).read_text(encoding="utf-8", errors="ignore").strip()
             )
-        root = tree.getroot()
-        mod_title = cls.etree_text_iter(root, "Title") or mod_title
-        mod_title = re.sub(r'[\/:*?"<>|]', "_", mod_title).strip()
-        mod_versions[0] = int(
-            cls.etree_text_iter(root, "VersionMajor") or mod_versions[0]
-        )
-        mod_versions[1] = int(
-            cls.etree_text_iter(root, "VersionMinor") or mod_versions[1]
-        )
-        mod_versions[2] = int(
-            cls.etree_text_iter(root, "TargetBuild") or mod_versions[2]
-        )
-        mod_description = (
-            cls.etree_text_iter(root, "ItemDescription") or mod_description
-        )
-        mod_PublishedFileId = (
-            cls.etree_text_iter(root, "PublishedFileId") or mod_PublishedFileId
-        )
-        for Tags in root.iter("Tags"):
-            if not isinstance(Tags.text, str) or not Tags.text.strip():
-                continue
-            mod_tags.append(Tags.text)
+            root = tree
+            mod_title = cls.etree_text_iter(root, "Title") or mod_title
+            mod_title = re.sub(r'[\/:*?"<>|]', "_", mod_title).strip()
+            mod_versions[0] = int(
+                cls.etree_text_iter(root, "VersionMajor") or mod_versions[0]
+            )
+            mod_versions[1] = int(
+                cls.etree_text_iter(root, "VersionMinor") or mod_versions[1]
+            )
+            mod_versions[2] = int(
+                cls.etree_text_iter(root, "TargetBuild") or mod_versions[2]
+            )
+            mod_description = (
+                cls.etree_text_iter(root, "ItemDescription") or mod_description
+            )
+            mod_PublishedFileId = (
+                cls.etree_text_iter(root, "PublishedFileId") or mod_PublishedFileId
+            )
+            for Tags in root.iter("Tags"):
+                if not isinstance(Tags.text, str) or not Tags.text.strip():
+                    continue
+                mod_tags.append(Tags.text)
+        except Exception:
+            pass
         return cls(
             mod_title, mod_versions, mod_tags, mod_description, mod_PublishedFileId
         )
