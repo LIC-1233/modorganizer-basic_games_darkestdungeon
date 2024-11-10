@@ -1598,7 +1598,9 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
                     )
             return static_resource_mapping
 
-        def preload_dynamic_resource():  # region mapping static resource files
+        def preload_dynamic_resource() -> (
+            List[mobase.Mapping]
+        ):  # region mapping static resource files
             dynamic_resource_mapping: List[mobase.Mapping] = []
             dynamic_resource_folder_suffix = {
                 "localization": ["loc2"],
@@ -1618,18 +1620,18 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
                                 )
                             else:
                                 mapping_file_name = file.name
-                            dynamic_resource_mapping.append(
-                                mobase.Mapping(
-                                    str(file.absolute()),
-                                    str(
-                                        self._get_game_path()
-                                        / relative_path
-                                        / mapping_file_name
-                                    ),
-                                    True,
-                                    True,
-                                )
-                            )
+                            # dynamic_resource_mapping.append(
+                            #     mobase.Mapping(
+                            #         str(file.absolute()),
+                            #         str(
+                            #             self._get_game_path()
+                            #             / relative_path
+                            #             / mapping_file_name
+                            #         ),
+                            #         True,
+                            #         True,
+                            #     )
+                            # )
                             dynamic_resource_mapping.append(
                                 mobase.Mapping(
                                     str(file.absolute()),
