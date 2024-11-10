@@ -681,22 +681,25 @@ class xml_data:
         mod_tags: List[str] = []
         mod_description: str = ""
         mod_PublishedFileId: str = ""
-        tree = ET.parse(xml_file)
-        if not tree:
+        try:
+            tree = ET.fromstring(
+                Path(xml_file).read_text(encoding="utf-8", errors="ignore").strip()
+            )
+        except Exception:
             return cls(
                 mod_title, mod_versions, mod_tags, mod_description, mod_PublishedFileId
             )
-        root = tree.getroot()
+        root = tree
         mod_title = cls.etree_text_iter(root, "Title") or mod_title
         mod_title = re.sub(r'[\/:*?"<>|]', "_", mod_title).strip()
         mod_versions[0] = int(
-            cls.etree_text_iter(root, "VersionMajor") or mod_versions[0]
+            float(cls.etree_text_iter(root, "VersionMajor") or mod_versions[0])
         )
         mod_versions[1] = int(
-            cls.etree_text_iter(root, "VersionMinor") or mod_versions[1]
+            float(cls.etree_text_iter(root, "VersionMinor") or mod_versions[1])
         )
         mod_versions[2] = int(
-            cls.etree_text_iter(root, "TargetBuild") or mod_versions[2]
+            float(cls.etree_text_iter(root, "TargetBuild") or mod_versions[2])
         )
         mod_description = (
             cls.etree_text_iter(root, "ItemDescription") or mod_description
@@ -1109,8 +1112,18 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
                 "shared/buffs/0000.buffs.json",
             ),
         ]
-        self.merge_to_one_json_necessary = self.merge_to_one_json[0:1]
+        self.merge_to_one_json_necessary = self.merge_to_one_json[0:0]
         self.merge_same_json = [
+            regex_json_data(
+                "trinkets/*rarities.trinkets.json",
+                ["id"],
+                "",
+            ),
+            regex_json_data(
+                "trinkets/*entries.trinkets.json",
+                ["id"],
+                "",
+            ),
             regex_json_data("scripts/*raid_settings.json", ["key"], ""),
             regex_json_data(
                 "raid/ai/*monster_brains.json",
@@ -1600,7 +1613,9 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
                                 self._get_mo_mods_path() / mod_title
                             )
                             if file.stem.startswith(tuple([str(i) for i in range(9)])):
-                                mapping_file_name = f"{index:03d}{file.stem}.{suffix}"
+                                mapping_file_name = (
+                                    f"999{index:03d}{file.stem}.{suffix}"
+                                )
                             else:
                                 mapping_file_name = file.name
                             dynamic_resource_mapping.append(
