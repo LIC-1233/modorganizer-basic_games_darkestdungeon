@@ -685,35 +685,46 @@ class xml_data:
             tree = ET.fromstring(
                 Path(xml_file).read_text(encoding="utf-8", errors="ignore").strip()
             )
+            root = tree
+            mod_title = cls.etree_text_iter(root, "Title") or mod_title
+            mod_title = re.sub(r'[\\\/:*?"<>|]', "_", mod_title).strip()
+            if not mod_title:
+                mod_title = "空mod名"
+            try:
+                mod_versions[0] = int(
+                    float(cls.etree_text_iter(root, "VersionMajor") or mod_versions[0])
+                )
+            except Exception:
+                mod_versions[0] = 0
+            try:
+                mod_versions[1] = int(
+                    float(cls.etree_text_iter(root, "VersionMajor") or mod_versions[1])
+                )
+            except Exception:
+                mod_versions[1] = 0
+            try:
+                mod_versions[2] = int(
+                    float(cls.etree_text_iter(root, "VersionMajor") or mod_versions[2])
+                )
+            except Exception:
+                mod_versions[2] = 0
+            mod_description = (
+                cls.etree_text_iter(root, "ItemDescription") or mod_description
+            )
+            mod_PublishedFileId = (
+                cls.etree_text_iter(root, "PublishedFileId") or mod_PublishedFileId
+            )
+            for Tags in root.iter("Tags"):
+                if not isinstance(Tags.text, str) or not Tags.text.strip():
+                    continue
+                mod_tags.append(Tags.text)
+            return cls(
+                mod_title, mod_versions, mod_tags, mod_description, mod_PublishedFileId
+            )
         except Exception:
             return cls(
                 mod_title, mod_versions, mod_tags, mod_description, mod_PublishedFileId
             )
-        root = tree
-        mod_title = cls.etree_text_iter(root, "Title") or mod_title
-        mod_title = re.sub(r'[\/:*?"<>|]', "_", mod_title).strip()
-        mod_versions[0] = int(
-            float(cls.etree_text_iter(root, "VersionMajor") or mod_versions[0])
-        )
-        mod_versions[1] = int(
-            float(cls.etree_text_iter(root, "VersionMinor") or mod_versions[1])
-        )
-        mod_versions[2] = int(
-            float(cls.etree_text_iter(root, "TargetBuild") or mod_versions[2])
-        )
-        mod_description = (
-            cls.etree_text_iter(root, "ItemDescription") or mod_description
-        )
-        mod_PublishedFileId = (
-            cls.etree_text_iter(root, "PublishedFileId") or mod_PublishedFileId
-        )
-        for Tags in root.iter("Tags"):
-            if not isinstance(Tags.text, str) or not Tags.text.strip():
-                continue
-            mod_tags.append(Tags.text)
-        return cls(
-            mod_title, mod_versions, mod_tags, mod_description, mod_PublishedFileId
-        )
 
 
 class DarkestDungeonModDataChecker(mobase.ModDataChecker):
@@ -1375,6 +1386,9 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
                     game_workshop_path / "content" / "262060" / PublishedFileId,
                     mo_mod_path / mod_title,
                 ):
+                    logger.info(
+                        f'Added workshop mod {game_workshop_path / "content" / "262060" / PublishedFileId} named {xml_data.mod_xml_parser(xml_file).mod_title} to {mo_mod_path / mod_title}'
+                    )
                     mo_mod_folder = mo_mod_path / mod_title
                     log_file = mo_mod_folder / "steam_workshop_uploader.log"
                     txt_file = mo_mod_folder / "modfiles.txt"
@@ -1466,6 +1480,9 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
             ):
                 logger.info(f"Adding mod {xml_file.parent.name}")
                 mod_title = util.scopy_mod(xml_file.parent, mo_mod_folder)
+                logger.info(
+                    f"Added local mod {xml_file.parent} named {mod_xml_data.mod_title} to {mo_mod_path / mod_title}"
+                )
                 mo_mod_folder = mo_mod_path / mod_title
                 (xml_file.parent / f"l{id}.manifest").write_text("", encoding="utf-8")
                 logger.info(f"Added mod {xml_file.parent.name}")
@@ -1523,7 +1540,7 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
             xml_path = self._get_overwrite_path() / "project.xml"
             xml_path.write_text(project_text)
 
-        def merge_effect_files():  # merge effect files
+        def merge_effect_files():  # type: ignore # merge effect files
             effect_files: Dict[str, List[Path]] = defaultdict(list)
             overwrite_effect_folder = self._get_overwrite_path() / "effects"
 
@@ -1719,7 +1736,7 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
         logger.debug("merge_same_json_file start...")
         merge_same_json_file()
         logger.debug("merge_same_json_file end")
-        merge_effect_files()
+        # merge_effect_files()
         return preload_static_resource() + preload_dynamic_resource()
 
     def executables(self):
