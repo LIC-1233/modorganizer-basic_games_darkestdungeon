@@ -27,7 +27,7 @@ logger.setLevel(logging.DEBUG)
 
 
 @dataclass
-class regex_json_data:
+class mergeFile_regex_data:
     regex: str
     identifier: list[str]
     file_name: str
@@ -53,35 +53,55 @@ class util:
     ) -> dict[str, list[dict[str, Any] | list[str]]]:
         result: dict[str, dict[tuple[str, ...], Any]] = defaultdict(dict)
         for path in paths:
-            dict1: dict[str, list[dict[str, Any] | list[str]] | dict[str, str]] = (
-                json.loads(util.try_read_text(path))
-            )
-            for p_key, p_list in dict1.items():
-                if isinstance(p_list, list):
-                    others: list[Any] = []
-                    s_dict: dict[tuple[str, ...], Any] = {}
-                    for p_value in p_list:
-                        if isinstance(p_value, dict):
-                            idf = set(identifier) & set(p_value.keys())
-                            if idf:
-                                s_key: tuple[str, ...] = tuple(p_value[i] for i in idf)
-                                s_dict[s_key] = p_value
+            result_temp: dict[str, dict[tuple[str, ...], Any]] = defaultdict(dict)
+            try:
+                dict1: dict[str, list[dict[str, Any] | list[str]] | dict[str, str]] = (
+                    json.loads(util.try_read_text(path))
+                )
+                for p_key, p_list in dict1.items():
+                    if isinstance(p_list, list):
+                        others: list[Any] = []
+                        s_dict: dict[tuple[str, ...], Any] = {}
+                        for p_value in p_list:
+                            if isinstance(p_value, dict):
+                                idf = set(identifier) & set(p_value.keys())
+                                if idf:
+                                    s_key: tuple[str, ...] = tuple(
+                                        p_value[i] for i in idf
+                                    )
+                                    s_dict[s_key] = p_value
+                                else:
+                                    others.append(p_value)
                             else:
                                 others.append(p_value)
-                        else:
-                            others.append(p_value)
-                    result[p_key].update(s_dict)
-                    result[p_key].update(
-                        {(f"other_{index}",): i for index, i in enumerate(others)}
-                    )
-                else:
-                    raise ValueError(
-                        f"Unexpected data type in {path} for {p_key}: {type(p_list)}"
-                    )
+                        result_temp[p_key].update(s_dict)
+                        result_temp[p_key].update(
+                            {(f"other_{index}",): i for index, i in enumerate(others)}
+                        )
+                    else:
+                        raise ValueError(
+                            f"Unexpected data type in {path} for {p_key}: {type(p_list)}"
+                        )
+            except Exception as e:
+                logger.error(f"Error in {path}: {e}")
+                continue
+            result.update(result_temp)
+
         output: dict[str, list[dict[str, Any] | list[str]]] = {
             k: list(v.values()) for k, v in result.items()
         }
         return output
+
+    @staticmethod
+    def smerge_darkest(paths: list[Path]) -> str:
+        result = ""
+        for path in paths:
+            try:
+                result += path.read_text("utf-8", errors="ignore") + "\n\n"
+            except Exception as e:
+                logger.error(f"Error in {path}: {e}")
+                continue
+        return result
 
     @staticmethod
     def scopy_mod(scr: str | Path, dst: str | Path) -> str:  # type: ignore
@@ -94,6 +114,149 @@ class util:
         else:
             shutil.copytree(scr, dst)
             return dst
+
+    @staticmethod
+    def is_number_and_percent_str(s: str):
+        for char in s:
+            if not (char.isdigit() or char == "%"):
+                return False
+        return True
+
+    @staticmethod
+    def real_int(string: str):
+        try:
+            int(string)
+            return True
+        except Exception:
+            return False
+
+    @staticmethod
+    def real_float(string: str):
+        try:
+            float(string)
+            return True
+        except Exception:
+            return False
+
+
+class darkest:
+    class obj(str):
+        pass
+
+    def __init__(
+        self,
+        data: dict[
+            str,
+            list[dict[str, list[str | bool | int | float] | str | bool | int | float]],
+        ],
+        strict: bool = True,
+    ):
+        self.data = data
+        self.__strict: bool = strict
+
+    def __str__(self) -> str:
+        if self.__strict:
+            content = ""
+            for p_key, p_values in self.data.items():
+                for p_value in p_values:
+                    content += f"{p_key}: "
+                    for s_key, s_values in p_value.items():
+                        content += f".{s_key} "
+                        if isinstance(s_values, list):
+                            for s_value in s_values:
+                                content += f"{s_value} "
+                        else:
+                            content += f"{s_values} "
+                    content += "\n"
+            return content
+        else:
+            content = ""
+            for p_key, p_values in self.data.items():
+                for p_value in p_values:
+                    content += f"{p_key}: "
+                    for s_key, s_values in p_value.items():
+                        content += f".{s_key} "
+                        if not isinstance(s_values, list):
+                            s_values = [s_values]
+                        for s_value in s_values:
+                            if isinstance(s_value, darkest.obj):
+                                content += f"{s_value} "
+                            elif isinstance(s_value, str):
+                                content += f'"{s_value}" '
+                            elif isinstance(s_value, bool):
+                                content += f"{s_value} ".lower()
+                            elif isinstance(s_value, int):
+                                content += f"{s_value} "
+                            else:
+                                content += f"{s_value} "
+                    content += "\n"
+            return content
+
+    @staticmethod
+    def paser(s: str, strict: bool = True):
+        # logger.debug(f"pasering: {s}")
+        pattern = r'(?:"[^"]*"|\S+)'
+        result: dict[
+            str,
+            list[dict[str, list[str | bool | int | float] | str | bool | int | float]],
+        ] = defaultdict(list)
+        current_p_key: str = ""
+        current_p_value: dict[
+            str, list[str | bool | int | float] | str | bool | int | float
+        ] = {}
+        current_s_key: str = ""
+        current_s_value: list[str | bool | int | float] = []
+        content: str = re.sub(r"//.*\n", "", s)
+        sections: list[str] = re.findall(pattern, content)
+        for section in sections:
+            if section[-1] == ":":
+                if current_p_key:
+                    if strict:
+                        current_p_value.update({current_s_key: current_s_value})
+                    elif len(current_s_value) == 1:
+                        current_p_value.update({current_s_key: current_s_value[0]})
+                    else:
+                        current_p_value.update({current_s_key: current_s_value})
+                    result[current_p_key].append(current_p_value)
+                current_p_key = section[:-1]
+                current_p_value = {}
+                current_s_key = ""
+                current_s_value = []
+            elif section[0] == "." and not util.is_number_and_percent_str(section[1:]):
+                if current_s_key:
+                    if len(current_s_value) == 1:
+                        current_p_value.update({current_s_key: current_s_value[0]})
+                    else:
+                        current_p_value.update({current_s_key: current_s_value})
+                current_s_key = section[1:]
+                current_s_value = []
+            else:
+                if strict:
+                    current_s_value.append(section)
+                else:
+                    if (section[0] == '"' and section[-1] == '"') or (
+                        section[0] == "'" and section[-1] == "'"
+                    ):
+                        current_s_value.append(section[1:-1])
+                    elif section.lower() == "true":
+                        current_s_value.append(True)
+                    elif section.lower() == "false":
+                        current_s_value.append(False)
+                    elif util.real_int(section):
+                        current_s_value.append(int(section))
+                    elif util.real_float(section):
+                        current_s_value.append(float(section))
+                    else:
+                        current_s_value.append(darkest.obj(section))
+        if current_p_key:
+            if strict:
+                current_p_value.update({current_s_key: current_s_value})
+            elif len(current_s_value) == 1:
+                current_p_value.update({current_s_key: current_s_value[0]})
+            else:
+                current_p_value.update({current_s_key: current_s_value})
+            result[current_p_key].append(current_p_value)
+        return darkest(result, strict)
 
 
 class Meta1node:
@@ -524,7 +687,7 @@ class xml_data:
 
     @classmethod
     def mod_xml_parser(cls, xml_file: str | Path):
-        mod_title: str = ""
+        mod_title: str = "空mod名"
         mod_versions: List[int] = [0, 0, 0]
         mod_tags: List[str] = []
         mod_description: str = ""
@@ -535,16 +698,27 @@ class xml_data:
             )
             root = tree
             mod_title = cls.etree_text_iter(root, "Title") or mod_title
-            mod_title = re.sub(r'[\/:*?"<>|]', "_", mod_title).strip()
-            mod_versions[0] = int(
-                cls.etree_text_iter(root, "VersionMajor") or mod_versions[0]
-            )
-            mod_versions[1] = int(
-                cls.etree_text_iter(root, "VersionMinor") or mod_versions[1]
-            )
-            mod_versions[2] = int(
-                cls.etree_text_iter(root, "TargetBuild") or mod_versions[2]
-            )
+            mod_title = re.sub(r'[\\\/:*?"<>|]', "_", mod_title).strip()
+            if not mod_title:
+                mod_title = "空mod名"
+            try:
+                mod_versions[0] = int(
+                    float(cls.etree_text_iter(root, "VersionMajor") or mod_versions[0])
+                )
+            except Exception:
+                mod_versions[0] = 0
+            try:
+                mod_versions[1] = int(
+                    float(cls.etree_text_iter(root, "VersionMajor") or mod_versions[1])
+                )
+            except Exception:
+                mod_versions[1] = 0
+            try:
+                mod_versions[2] = int(
+                    float(cls.etree_text_iter(root, "VersionMajor") or mod_versions[2])
+                )
+            except Exception:
+                mod_versions[2] = 0
             mod_description = (
                 cls.etree_text_iter(root, "ItemDescription") or mod_description
             )
@@ -555,11 +729,13 @@ class xml_data:
                 if not isinstance(Tags.text, str) or not Tags.text.strip():
                     continue
                 mod_tags.append(Tags.text)
+            return cls(
+                mod_title, mod_versions, mod_tags, mod_description, mod_PublishedFileId
+            )
         except Exception:
-            pass
-        return cls(
-            mod_title, mod_versions, mod_tags, mod_description, mod_PublishedFileId
-        )
+            return cls(
+                mod_title, mod_versions, mod_tags, mod_description, mod_PublishedFileId
+            )
 
 
 class DarkestDungeonModDataChecker(mobase.ModDataChecker):
@@ -937,62 +1113,80 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
         mobase.IPluginFileMapper.__init__(self)
         self._organizer: mobase.IOrganizer = None  # type: ignore
         self.merge_to_one_json = [
-            regex_json_data(
+            mergeFile_regex_data(
                 "trinkets/*rarities.trinkets.json",
                 ["id"],
                 "trinkets/0000.rarities.trinkets.json",
             ),
-            regex_json_data(
+            mergeFile_regex_data(
                 "trinkets/*entries.trinkets.json",
                 ["id"],
                 "trinkets/0000.entries.trinkets.json",
             ),
-            regex_json_data(
+            mergeFile_regex_data(
                 "raid/ai/*monster_brains.json",
                 ["id"],
                 "raid/ai/0000.monster_brains.json",
             ),
-            regex_json_data(
+            mergeFile_regex_data(
                 "shared/buffs/*buffs.json",
                 ["id"],
                 "shared/buffs/0000.buffs.json",
             ),
         ]
-        self.merge_to_one_json_necessary = self.merge_to_one_json[0:2]
+        self.merge_to_one_json_necessary = self.merge_to_one_json[0:0]
         self.merge_same_json = [
-            regex_json_data("scripts/*raid_settings.json", ["key"], ""),
-            regex_json_data(
+            mergeFile_regex_data(
+                "trinkets/*rarities.trinkets.json",
+                ["id"],
+                "",
+            ),
+            mergeFile_regex_data(
+                "trinkets/*entries.trinkets.json",
+                ["id"],
+                "",
+            ),
+            mergeFile_regex_data("scripts/*raid_settings.json", ["key"], ""),
+            mergeFile_regex_data(
                 "raid/ai/*monster_brains.json",
                 ["id"],
                 "",
             ),
-            regex_json_data(
+            mergeFile_regex_data(
                 "campaign/quest/*quest.plot_quests.json",
                 ["id"],
                 "",
             ),
-            regex_json_data(
+            mergeFile_regex_data(
                 "loot/*loot.json",
                 ["id", "difficulty", "dungeon"],
                 "",
             ),
-            regex_json_data(
+            mergeFile_regex_data(
                 "shared/quirk/*quirk_library.json",
                 ["id"],
                 "",
             ),
-            regex_json_data(
+            mergeFile_regex_data(
                 "shared/buffs/*buffs.json",
                 ["id"],
                 "",
             ),
-            regex_json_data(
+            mergeFile_regex_data(
                 "shared/quirk/*quirk_act_outs.json",
                 ["quirk_id"],
                 "",
             ),
         ]
         self.merge_same_json_necessary = self.merge_same_json
+        self.merge_to_one_darkest = [
+            mergeFile_regex_data(
+                "campaign/town/provision/*.provision.layout.darkest",
+                [],
+                "campaign/town/provision/zzzzz.provision.layout.darkest",
+            ),
+        ]
+        self.merge_to_one_darkest_necessary = self.merge_to_one_darkest
 
     def local_saves_directory(self) -> List[Path]:
         self._organizer.profilePath()
@@ -1211,6 +1405,9 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
                     game_workshop_path / "content" / "262060" / PublishedFileId,
                     mo_mod_path / mod_title,
                 ):
+                    logger.info(
+                        f'Added workshop mod {game_workshop_path / "content" / "262060" / PublishedFileId} named {xml_data.mod_xml_parser(xml_file).mod_title} to {mo_mod_path / mod_title}'
+                    )
                     mo_mod_folder = mo_mod_path / mod_title
                     log_file = mo_mod_folder / "steam_workshop_uploader.log"
                     txt_file = mo_mod_folder / "modfiles.txt"
@@ -1302,6 +1499,9 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
             ):
                 logger.info(f"Adding mod {xml_file.parent.name}")
                 mod_title = util.scopy_mod(xml_file.parent, mo_mod_folder)
+                logger.info(
+                    f"Added local mod {xml_file.parent} named {mod_xml_data.mod_title} to {mo_mod_path / mod_title}"
+                )
                 mo_mod_folder = mo_mod_path / mod_title
                 (xml_file.parent / f"l{id}.manifest").write_text("", encoding="utf-8")
                 logger.info(f"Added mod {xml_file.parent.name}")
@@ -1359,7 +1559,7 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
             xml_path = self._get_overwrite_path() / "project.xml"
             xml_path.write_text(project_text)
 
-        def merge_effect_files():  # merge effect files
+        def merge_effect_files():  # type: ignore # merge effect files
             effect_files: Dict[str, List[Path]] = defaultdict(list)
             overwrite_effect_folder = self._get_overwrite_path() / "effects"
 
@@ -1374,6 +1574,34 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
                     self._get_mo_mods_path() / mod_title / "effects"
                 ).glob("*.effects.darkest"):
                     effect_files[effect_file.name].append(effect_file)
+
+                    # region fix riposte_validate problem
+                    trigger = False
+                    darkest_data = darkest.paser(
+                        effect_file.read_text(encoding="utf-8", errors="ignore")
+                    )
+                    for index, effect in enumerate(darkest_data.data["effect"]):
+                        if (
+                            "target" in effect
+                            and (
+                                effect["target"] == '"target"'
+                                or effect["target"] == "'target'"
+                            )
+                            and "riposte" in effect
+                            and effect["riposte"] == "1"
+                            and "riposte_validate" not in effect
+                        ):
+                            darkest_data.data["effect"][index]["riposte_validate"] = (
+                                "false"
+                            )
+                            trigger = True
+                    if trigger:
+                        open(
+                            overwrite_effect_folder / f"{effect_file.name}",
+                            "w+",
+                            encoding="utf-8",
+                        ).write(str(darkest_data))
+                    # endregion
 
             for effect_file_name, files in effect_files.items():
                 if len(files) > 1:
@@ -1406,7 +1634,9 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
                     )
             return static_resource_mapping
 
-        def preload_dynamic_resource():  # region mapping static resource files
+        def preload_dynamic_resource() -> (
+            List[mobase.Mapping]
+        ):  # region mapping static resource files
             dynamic_resource_mapping: List[mobase.Mapping] = []
             dynamic_resource_folder_suffix = {
                 "localization": ["loc2"],
@@ -1421,21 +1651,23 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
                                 self._get_mo_mods_path() / mod_title
                             )
                             if file.stem.startswith(tuple([str(i) for i in range(9)])):
-                                mapping_file_name = f"{index:03d}{file.stem}.{suffix}"
+                                mapping_file_name = (
+                                    f"999{index:03d}{file.stem}.{suffix}"
+                                )
                             else:
                                 mapping_file_name = file.name
-                            dynamic_resource_mapping.append(
-                                mobase.Mapping(
-                                    str(file.absolute()),
-                                    str(
-                                        self._get_game_path()
-                                        / relative_path
-                                        / mapping_file_name
-                                    ),
-                                    True,
-                                    True,
-                                )
-                            )
+                            # dynamic_resource_mapping.append(
+                            #     mobase.Mapping(
+                            #         str(file.absolute()),
+                            #         str(
+                            #             self._get_game_path()
+                            #             / relative_path
+                            #             / mapping_file_name
+                            #         ),
+                            #         True,
+                            #         True,
+                            #     )
+                            # )
                             dynamic_resource_mapping.append(
                                 mobase.Mapping(
                                     str(file.absolute()),
@@ -1477,23 +1709,58 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
                             json.dumps(result, ensure_ascii=False)
                         )
 
-        def merge_regex_json_file():
-            for source in self.merge_to_one_json:
-                for file in self._get_overwrite_path().glob(source.regex):
+        def merge_regex_darkest_file():
+            for regex_data in self.merge_to_one_darkest:
+                for file in self._get_overwrite_path().glob(regex_data.regex):
                     file.unlink()
-            for source in self.merge_to_one_json_necessary:
+            for regex_data in self.merge_to_one_darkest_necessary:
+                logger.debug(f"merging regex {regex_data.regex}")
                 all_regex_files: list[Path] = []
-                # data_list: list[dict[str, list[dict[str, Any]]]] = []
                 relative_paths: list[Path] = []
                 for mod_title in mod_titles:
-                    regex_files = (self._get_mo_mods_path() / mod_title).glob(
-                        source.regex
+                    regex_files = list(
+                        (self._get_mo_mods_path() / mod_title).glob(regex_data.regex)
                     )
                     all_regex_files += regex_files
                     for file in regex_files:
                         relative_paths.append(
                             file.relative_to(self._get_mo_mods_path() / mod_title)
                         )
+                        logger.debug(f"merging {file}")
+                result = util.smerge_darkest(
+                    all_regex_files,
+                )
+                if not result:
+                    logger.error(f"Failed to merge {regex_data.file_name}")
+                    continue
+                overwrite_file = self._get_overwrite_path() / regex_data.file_name
+                overwrite_file.parent.mkdir(parents=True, exist_ok=True)
+                for relative_path in relative_paths:
+                    file_path = self._get_overwrite_path() / relative_path
+                    file_path.parent.mkdir(parents=True, exist_ok=True)
+                    # file_path.touch()
+                    # logger.debug(f"touch {file_path}")
+                open(overwrite_file, "w+", encoding="utf-8").write(result)
+                logger.debug(f"merge regex json file {overwrite_file} Done")
+
+        def merge_regex_json_file():
+            for source in self.merge_to_one_json:
+                for file in self._get_overwrite_path().glob(source.regex):
+                    file.unlink()
+            for source in self.merge_to_one_json_necessary:
+                logger.debug(f"merging regex {source.regex}")
+                all_regex_files: list[Path] = []
+                relative_paths: list[Path] = []
+                for mod_title in mod_titles:
+                    regex_files = list(
+                        (self._get_mo_mods_path() / mod_title).glob(source.regex)
+                    )
+                    all_regex_files += regex_files
+                    for file in regex_files:
+                        relative_paths.append(
+                            file.relative_to(self._get_mo_mods_path() / mod_title)
+                        )
+                        logger.debug(f"merging {file}")
                 result = util.smerge_jsons(
                     all_regex_files,
                     source.identifier,
@@ -1511,7 +1778,7 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
                 open(overwrite_file, "w+", encoding="utf-8").write(
                     json.dumps(result, ensure_ascii=False)
                 )
-                logger.debug(f"merge regex json file {overwrite_file}")
+                logger.debug(f"merge regex json file {overwrite_file} Done")
 
         logger.debug("create_project_xml start...")
         create_project_xml()
@@ -1522,7 +1789,10 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
         logger.debug("merge_same_json_file start...")
         merge_same_json_file()
         logger.debug("merge_same_json_file end")
-        merge_effect_files()
+        logger.debug("merge_same_darkest_file start...")
+        merge_regex_darkest_file()
+        logger.debug("merge_same_darkest_file end")
+        # merge_effect_files()
         return preload_static_resource() + preload_dynamic_resource()
 
     def executables(self):
