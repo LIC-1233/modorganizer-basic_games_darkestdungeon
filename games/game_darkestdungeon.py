@@ -687,7 +687,7 @@ class xml_data:
 
     @classmethod
     def mod_xml_parser(cls, xml_file: str | Path):
-        mod_title: str = ""
+        mod_title: str = "空mod名"
         mod_versions: List[int] = [0, 0, 0]
         mod_tags: List[str] = []
         mod_description: str = ""
