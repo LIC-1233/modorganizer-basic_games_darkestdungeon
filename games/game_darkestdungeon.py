@@ -1187,6 +1187,14 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
             ),
         ]
         self.merge_to_one_darkest_necessary = self.merge_to_one_darkest
+        self.merge_same_darkest = [
+            mergeFile_regex_data(
+                "colours/*.colours.darkest",
+                [],
+                "",
+            ),
+        ]
+        self.merge_same_darkest_necessary = self.merge_same_darkest
 
     def local_saves_directory(self) -> List[Path]:
         self._organizer.profilePath()
@@ -1683,6 +1691,30 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
                             )
             return dynamic_resource_mapping
 
+        def merge_same_darkest_file():
+            for source in self.merge_same_darkest:
+                for file in self._get_overwrite_path().glob(source.regex):
+                    file.unlink()
+            for source in self.merge_same_darkest_necessary:
+                relative_path_file: dict[Path, list[Path]] = defaultdict(list)
+                for mod_title in mod_titles:
+                    for file in (self._get_mo_mods_path() / mod_title).glob(
+                        source.regex
+                    ):
+                        relative_path_file[
+                            file.relative_to(self._get_mo_mods_path() / mod_title)
+                        ].append(file)
+                for relative_path, files in relative_path_file.items():
+                    if len(files) > 1:
+                        logger.debug(f"merge {relative_path}")
+                        result = util.smerge_darkest(files)
+                        if not result:
+                            logger.error(f"Failed to merge {relative_path}")
+                            continue
+                        overwrite_file = self._get_overwrite_path() / relative_path
+                        overwrite_file.parent.mkdir(parents=True, exist_ok=True)
+                        open(overwrite_file, "w+", encoding="utf-8").write(result)
+
         def merge_same_json_file():
             for source in self.merge_same_json:
                 for file in self._get_overwrite_path().glob(source.regex):
@@ -1789,9 +1821,12 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
         logger.debug("merge_same_json_file start...")
         merge_same_json_file()
         logger.debug("merge_same_json_file end")
-        logger.debug("merge_same_darkest_file start...")
+        logger.debug("merge_regex_darkest_file start...")
         merge_regex_darkest_file()
-        logger.debug("merge_same_darkest_file end")
+        logger.debug("merge_regex_darkest_file end")
+        logger.debug("merge_regex_darkest_file start...")
+        merge_same_darkest_file()
+        logger.debug("merge_regex_darkest_file end")
         # merge_effect_files()
         return preload_static_resource() + preload_dynamic_resource()
 
