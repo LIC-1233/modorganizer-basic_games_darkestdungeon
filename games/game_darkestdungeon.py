@@ -1195,6 +1195,14 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
             ),
         ]
         self.merge_same_darkest_necessary = self.merge_same_darkest
+        self.reorder_file = [
+            mergeFile_regex_data(
+                "trinkets/*rarities.trinkets.json",
+                ["id"],
+                "",
+            ),
+        ]
+        self.reorder_file_necessary = self.reorder_file
 
     def local_saves_directory(self) -> List[Path]:
         self._organizer.profilePath()
@@ -1664,18 +1672,6 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
                                 )
                             else:
                                 mapping_file_name = file.name
-                            # dynamic_resource_mapping.append(
-                            #     mobase.Mapping(
-                            #         str(file.absolute()),
-                            #         str(
-                            #             self._get_game_path()
-                            #             / relative_path
-                            #             / mapping_file_name
-                            #         ),
-                            #         True,
-                            #         True,
-                            #     )
-                            # )
                             dynamic_resource_mapping.append(
                                 mobase.Mapping(
                                     str(file.absolute()),
@@ -1812,6 +1808,37 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
                 )
                 logger.debug(f"merge regex json file {overwrite_file} Done")
 
+        def reorder_files():
+            reorder_files_mapping: List[mobase.Mapping] = []
+            for source in self.reorder_file:
+                for file in self._get_overwrite_path().glob(source.regex):
+                    file.unlink()
+            logger.debug("reordering file")
+            for source in self.merge_to_one_json_necessary:
+                all_regex_files: list[Path] = []
+                overwrite_files: list[Path] = []
+                for index, mod_title in enumerate(mod_titles):
+                    regex_files = list(
+                        (self._get_mo_mods_path() / mod_title).glob(source.regex)
+                    )
+                    all_regex_files += regex_files
+                    for file in regex_files:
+                        relative_path = file.relative_to(
+                            self._get_mo_mods_path() / mod_title
+                        )
+                        overwrite_file = self._get_overwrite_path() / relative_path
+                        overwrite_files.append(overwrite_file)
+                        new_overwrite_file = overwrite_file.parent / (
+                            f"{index:03d}" + overwrite_file.name
+                        )
+                        reorder_files_mapping.append(
+                            mobase.Mapping(str(file), str(new_overwrite_file), False)
+                        )
+                for overwrite_file in overwrite_files:
+                    overwrite_file.parent.mkdir(parents=True, exist_ok=True)
+                    overwrite_file.touch()
+            return reorder_files_mapping
+
         logger.debug("create_project_xml start...")
         create_project_xml()
         logger.debug("create_project_xml end")
@@ -1828,7 +1855,7 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
         merge_same_darkest_file()
         logger.debug("merge_regex_darkest_file end")
         # merge_effect_files()
-        return preload_static_resource() + preload_dynamic_resource()
+        return preload_static_resource() + preload_dynamic_resource() + reorder_files()
 
     def executables(self):
         if self.is_steam():
