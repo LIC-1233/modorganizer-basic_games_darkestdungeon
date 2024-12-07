@@ -1186,12 +1186,17 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
         self.reorder_file = [
             mergeFile_regex_data(
                 "trinkets/*rarities.trinkets.json",
-                ["id"],
+                [],
                 "",
             ),
             mergeFile_regex_data(
                 "campaign/town/provision/*layout.darkest",
-                ["id"],
+                [],
+                "",
+            ),
+            mergeFile_regex_data(
+                "inventory/*inventory.system_configs.darkest",
+                [],
                 "",
             ),
         ]
