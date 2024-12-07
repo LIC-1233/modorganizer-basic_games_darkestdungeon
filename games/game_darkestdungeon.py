@@ -1102,7 +1102,6 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
     GameGogId = 1719198803
     GameBinary = "_windowsnosteam//darkest.exe"
     GameDataPath = r"mods\!!MOD"
-    # GameDataPath = r""
     GameSupportURL = (
         r"https://github.com/ModOrganizer2/modorganizer-basic_games/wiki/"
         "Game:-Darkest-Dungeon"
@@ -1136,11 +1135,6 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
         ]
         self.merge_to_one_json_necessary = self.merge_to_one_json[0:0]
         self.merge_same_json = [
-            # mergeFile_regex_data(
-            #     "trinkets/*rarities.trinkets.json",
-            #     ["id"],
-            #     "",
-            # ),
             mergeFile_regex_data(
                 "trinkets/*entries.trinkets.json",
                 ["id"],
@@ -1181,14 +1175,6 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
         self.merge_same_json_necessary: List[mergeFile_regex_data] = (
             self.merge_same_json
         )
-        self.merge_to_one_darkest: List[mergeFile_regex_data] = [
-            # mergeFile_regex_data(
-            #     "campaign/town/provision/*.provision.layout.darkest",
-            #     [],
-            #     "campaign/town/provision/zzzzz.provision.layout.darkest",
-            # ),
-        ]
-        self.merge_to_one_darkest_necessary = self.merge_to_one_darkest
         self.merge_same_darkest = [
             mergeFile_regex_data(
                 "colours/*.colours.darkest",
@@ -1744,40 +1730,6 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
                             json.dumps(result, ensure_ascii=False)
                         )
 
-        def merge_regex_darkest_file():
-            for regex_data in self.merge_to_one_darkest:
-                for file in self._get_overwrite_path().glob(regex_data.regex):
-                    file.unlink()
-            for regex_data in self.merge_to_one_darkest_necessary:
-                logger.debug(f"merging regex {regex_data.regex}")
-                all_regex_files: list[Path] = []
-                relative_paths: list[Path] = []
-                for mod_title in mod_titles:
-                    regex_files = list(
-                        (self._get_mo_mods_path() / mod_title).glob(regex_data.regex)
-                    )
-                    all_regex_files += regex_files
-                    for file in regex_files:
-                        relative_paths.append(
-                            file.relative_to(self._get_mo_mods_path() / mod_title)
-                        )
-                        logger.debug(f"merging {file}")
-                result = util.smerge_darkest(
-                    all_regex_files,
-                )
-                if not result:
-                    logger.error(f"Failed to merge {regex_data.file_name}")
-                    continue
-                overwrite_file = self._get_overwrite_path() / regex_data.file_name
-                overwrite_file.parent.mkdir(parents=True, exist_ok=True)
-                for relative_path in relative_paths:
-                    file_path = self._get_overwrite_path() / relative_path
-                    file_path.parent.mkdir(parents=True, exist_ok=True)
-                    # file_path.touch()
-                    # logger.debug(f"touch {file_path}")
-                open(overwrite_file, "w+", encoding="utf-8").write(result)
-                logger.debug(f"merge regex json file {overwrite_file} Done")
-
         def merge_regex_json_file():
             for source in self.merge_to_one_json:
                 for file in self._get_overwrite_path().glob(source.regex):
@@ -1861,9 +1813,6 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
         logger.debug("merge_same_json_file start...")
         merge_same_json_file()
         logger.debug("merge_same_json_file end")
-        logger.debug("merge_regex_darkest_file start...")
-        merge_regex_darkest_file()
-        logger.debug("merge_regex_darkest_file end")
         logger.debug("merge_regex_darkest_file start...")
         merge_same_darkest_file()
         logger.debug("merge_regex_darkest_file end")
