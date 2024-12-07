@@ -1136,6 +1136,11 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
         self.merge_to_one_json_necessary = self.merge_to_one_json[0:0]
         self.merge_same_json = [
             mergeFile_regex_data(
+                "trinkets/*rarities.trinkets.json",
+                [],
+                "",
+            ),
+            mergeFile_regex_data(
                 "trinkets/*entries.trinkets.json",
                 ["id"],
                 "",
@@ -1184,11 +1189,6 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
         ]
         self.merge_same_darkest_necessary = self.merge_same_darkest
         self.reorder_file = [
-            mergeFile_regex_data(
-                "trinkets/*rarities.trinkets.json",
-                [],
-                "",
-            ),
             mergeFile_regex_data(
                 "campaign/town/provision/*layout.darkest",
                 [],
