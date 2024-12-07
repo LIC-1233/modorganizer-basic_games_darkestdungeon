@@ -1136,11 +1136,11 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
         ]
         self.merge_to_one_json_necessary = self.merge_to_one_json[0:0]
         self.merge_same_json = [
-            mergeFile_regex_data(
-                "trinkets/*rarities.trinkets.json",
-                ["id"],
-                "",
-            ),
+            # mergeFile_regex_data(
+            #     "trinkets/*rarities.trinkets.json",
+            #     ["id"],
+            #     "",
+            # ),
             mergeFile_regex_data(
                 "trinkets/*entries.trinkets.json",
                 ["id"],
@@ -1178,13 +1178,15 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
                 "",
             ),
         ]
-        self.merge_same_json_necessary = self.merge_same_json
-        self.merge_to_one_darkest = [
-            mergeFile_regex_data(
-                "campaign/town/provision/*.provision.layout.darkest",
-                [],
-                "campaign/town/provision/zzzzz.provision.layout.darkest",
-            ),
+        self.merge_same_json_necessary: List[mergeFile_regex_data] = (
+            self.merge_same_json
+        )
+        self.merge_to_one_darkest: List[mergeFile_regex_data] = [
+            # mergeFile_regex_data(
+            #     "campaign/town/provision/*.provision.layout.darkest",
+            #     [],
+            #     "campaign/town/provision/zzzzz.provision.layout.darkest",
+            # ),
         ]
         self.merge_to_one_darkest_necessary = self.merge_to_one_darkest
         self.merge_same_darkest = [
@@ -1198,6 +1200,11 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
         self.reorder_file = [
             mergeFile_regex_data(
                 "trinkets/*rarities.trinkets.json",
+                ["id"],
+                "",
+            ),
+            mergeFile_regex_data(
+                "campaign/town/provision/*layout.darkest",
                 ["id"],
                 "",
             ),
@@ -1814,7 +1821,7 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
                 for file in self._get_overwrite_path().glob(source.regex):
                     file.unlink()
             logger.debug("reordering file")
-            for source in self.merge_to_one_json_necessary:
+            for source in self.reorder_file_necessary:
                 all_regex_files: list[Path] = []
                 overwrite_files: list[Path] = []
                 for index, mod_title in enumerate(mod_titles):
@@ -1827,13 +1834,19 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
                             self._get_mo_mods_path() / mod_title
                         )
                         overwrite_file = self._get_overwrite_path() / relative_path
+                        mapping_file = (
+                            self._get_game_path()
+                            / Path(self.GameDataPath)
+                            / relative_path
+                        )
                         overwrite_files.append(overwrite_file)
-                        new_overwrite_file = overwrite_file.parent / (
+                        new_mapping_file = mapping_file.parent / (
                             f"{index:03d}" + overwrite_file.name
                         )
                         reorder_files_mapping.append(
-                            mobase.Mapping(str(file), str(new_overwrite_file), False)
+                            mobase.Mapping(str(file), str(new_mapping_file), False)
                         )
+                        logger.info(f"reordering {file} to {new_mapping_file}")
                 for overwrite_file in overwrite_files:
                     overwrite_file.parent.mkdir(parents=True, exist_ok=True)
                     overwrite_file.touch()
