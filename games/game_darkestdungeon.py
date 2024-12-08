@@ -4,7 +4,7 @@ import random
 import re
 import shutil
 import struct
-from collections import defaultdict
+from collections import defaultdict, deque
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
@@ -137,6 +137,123 @@ class util:
             return True
         except Exception:
             return False
+
+    @staticmethod
+    def topological_sort(projects: str, dependencies: dict[str, list[str] | set[str]]):
+        # 创建一个图的邻接表表示法
+        graph: dict[str, list[str]] = defaultdict(list)
+        # 记录每个节点的入度
+        in_degree = {project: 0 for project in projects}
+
+        # 填充图和入度表
+        for project, deps in dependencies.items():
+            for dep in deps:
+                graph[dep].append(project)
+                in_degree[project] += 1
+
+        # 初始化队列，添加所有入度为0的节点
+        queue = deque([project for project in projects if in_degree[project] == 0])
+        sorted_order: list[str] = []
+
+        while queue:
+            project = queue.popleft()
+            sorted_order.append(project)
+
+            for next_project in graph[project]:
+                in_degree[next_project] -= 1
+                if in_degree[next_project] == 0:
+                    queue.append(next_project)
+
+        if len(sorted_order) == len(projects):
+            return sorted_order
+        else:
+            # 如果存在循环依赖，则无法完成拓扑排序
+            raise ValueError("There is a cycle in the dependency graph.")
+
+    @staticmethod
+    def merge_reorder_rarity(files: list[Path], trinkets_path: Path):
+        result: list[mobase.Mapping] = []
+        base_rarity = {
+            "darkest_dungeon",
+            "trophy",
+            "ancestral_shambler",
+            "ancestral",
+            "crow",
+            "courtier",
+            "collector",
+            "madman",
+            "very_rare",
+            "rare",
+            "uncommon",
+            "common",
+            "very_common",
+            "kickstarter",
+            "arena",
+            "comet",
+            "mildred",
+            "thing",
+            "shieldbreaker",
+            "crimson_court",
+        }
+        file_ref_rarity: dict[Path, set[str]] = defaultdict(set)
+        file_rarity: dict[Path, set[str]] = defaultdict(set)
+        for file in files:
+            for rarity in json.loads(file.read_text("utf-8", errors="ignore"))[
+                "rarities"
+            ]:
+                if "id" in rarity:
+                    file_rarity[file].add(rarity["id"])
+                if "insert_before" in rarity:
+                    file_ref_rarity[file].add(rarity["insert_before"])
+
+        all_rarity = base_rarity.union(*file_rarity.values())
+        file_ref_files: dict[Path, list[Path]] = defaultdict(list)
+        file_unknow_rarity: dict[Path, set[str]] = defaultdict(set)
+        for file in files:
+            file_unknow_rarity[file] = file_ref_rarity[file] - all_rarity
+            if len(file_unknow_rarity[file]) > 0:
+                logger.info(f"{file} 缺失前置稀有度 {file_unknow_rarity[file]}")
+            ref_rarity = file_ref_rarity[file] - base_rarity - file_rarity[file]
+            for ref_file in files:
+                if ref_rarity:
+                    if ref_rarity & file_rarity[ref_file]:
+                        file_ref_files[file].append(ref_file)
+                        ref_rarity -= file_rarity[ref_file]
+                else:
+                    break
+
+        logger.debug(f"稀有度依赖关系：{file_ref_files}")
+
+        graph: dict[Path, list[Path]] = defaultdict(list)
+        in_degree = {file: 0 for file in files}
+        for file, ref_files in file_ref_files.items():
+            for ref_file in ref_files:
+                graph[ref_file].append(file)
+                in_degree[file] += 1
+        queue = [file for file in files if in_degree[file] == 0]
+        sorted_order: list[Path] = []
+        while queue:
+            file = queue.pop(0)
+            sorted_order.append(file)
+
+            for next_project in graph[file]:
+                in_degree[next_project] -= 1
+                if in_degree[next_project] == 0:
+                    queue.append(next_project)
+
+        if not len(sorted_order) == len(files):
+            # 如果存在循环依赖，则无法完成拓扑排序
+            raise ValueError("稀有度存在循环依赖，无法完成拓扑排序")
+
+        for index, file in enumerate(sorted_order):
+            result.append(
+                mobase.Mapping(
+                    str(file.absolute()),
+                    str(trinkets_path / (f"{index:04d}" + file.name)),
+                    False,
+                )
+            )
+        return result
 
 
 class darkest:
@@ -1136,11 +1253,6 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
         self.merge_to_one_json_necessary = self.merge_to_one_json[0:0]
         self.merge_same_json = [
             mergeFile_regex_data(
-                "trinkets/*rarities.trinkets.json",
-                [],
-                "",
-            ),
-            mergeFile_regex_data(
                 "trinkets/*entries.trinkets.json",
                 ["id"],
                 "",
@@ -1177,9 +1289,7 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
                 "",
             ),
         ]
-        self.merge_same_json_necessary: List[mergeFile_regex_data] = (
-            self.merge_same_json
-        )
+        self.merge_same_json_necessary = self.merge_same_json
         self.merge_same_darkest = [
             mergeFile_regex_data(
                 "colours/*.colours.darkest",
@@ -1803,11 +1913,24 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
                         reorder_files_mapping.append(
                             mobase.Mapping(str(file), str(new_mapping_file), False)
                         )
-                        logger.info(f"reordering {file} to {new_mapping_file}")
+                        logger.debug(f"reordering {file} to {new_mapping_file}")
                 for overwrite_file in overwrite_files:
                     overwrite_file.parent.mkdir(parents=True, exist_ok=True)
                     overwrite_file.touch()
             return reorder_files_mapping
+
+        def reorder_trinkets_rarity_files():
+            rarity_files: list[Path] = []
+            for mod_title in mod_titles:
+                rarity_files += list(
+                    (self._get_mo_mods_path() / mod_title).glob(
+                        "trinkets/*rarities.trinkets.json"
+                    )
+                )
+            return util.merge_reorder_rarity(
+                rarity_files,
+                self._get_game_path() / Path(self.GameDataPath) / "trinkets",
+            )
 
         logger.debug("create_project_xml start...")
         create_project_xml()
@@ -1822,7 +1945,12 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
         merge_same_darkest_file()
         logger.debug("merge_regex_darkest_file end")
         # merge_effect_files()
-        return preload_static_resource() + preload_dynamic_resource() + reorder_files()
+        return (
+            preload_static_resource()
+            + preload_dynamic_resource()
+            + reorder_files()
+            + reorder_trinkets_rarity_files()
+        )
 
     def executables(self):
         if self.is_steam():
