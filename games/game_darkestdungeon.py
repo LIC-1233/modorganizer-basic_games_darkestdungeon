@@ -1387,6 +1387,9 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
     def _get_game_path(self):
         return Path(self.gameDirectory().absolutePath())
 
+    def _get_mapping_mod_path(self):
+        return self._get_game_path() / self.GameDataPath
+
     def _get_workshop_path(self):
         workshop_paths: list[Path] = []
         steam_path = find_steam_path()
@@ -1440,10 +1443,8 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
             for i in mo_mod_path.glob("*/project_file/l*.manifest")
         }
 
-        if not (self._get_game_path() / Path(self.GameDataPath)).exists():
-            (self._get_game_path() / Path(self.GameDataPath)).mkdir(
-                parents=True, exist_ok=True
-            )
+        if not self._get_mapping_mod_path().exists():
+            (self._get_mapping_mod_path()).mkdir(parents=True, exist_ok=True)
 
         for mod_name in mod_names:
             mod = mod_list.getMod(mod_name)
@@ -1661,6 +1662,35 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
             for i in self._organizer.modList().allModsByProfilePriority()
             if self._organizer.modList().state(i) & mobase.ModState.ACTIVE
         ]
+        modfiles: Dict[Path, Path] = {}
+
+        def gen_modfiles():  # generate modfiles.txt
+            for mod_title in mod_titles:
+                mod_folder = self._get_mo_mods_path() / mod_title
+                for root, _folders, _files in Path.walk(mod_folder):
+                    path = Path(root)
+                    relative_path = path.relative_to(mod_folder)
+                    for file in _files:
+                        modfiles[relative_path / file] = Path(root) / file
+                # for root, _folders, _files in os.walk(mod_folder):
+                #     path = Path(root)
+                #     relative_path = path.relative_to(mod_folder)
+                #     with os.scandir(root) as it:
+                #         for entry in it:
+                #             if entry.is_file():
+                #                 modfiles[str(relative_path / entry.name)] = entry.stat().st_size
+
+        def modfiles_txt():  # generate modfiles.txt
+            modfiles_path = self._get_overwrite_path() / "modfiles.txt"
+            logger.debug(f"{modfiles}")
+            modfiles_path.write_text(
+                "\n".join(
+                    sorted(
+                        f"{k.as_posix()} {v.stat().st_size}"
+                        for k, v in modfiles.items()
+                    )
+                )
+            )
 
         def create_project_xml():  # merge mod xml
             project_text = """
@@ -1818,6 +1848,7 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
                         overwrite_file = self._get_overwrite_path() / relative_path
                         overwrite_file.parent.mkdir(parents=True, exist_ok=True)
                         open(overwrite_file, "w+", encoding="utf-8").write(result)
+                        modfiles[relative_path] = overwrite_file
 
         def merge_same_json_file():
             for source in self.merge_same_json:
@@ -1844,6 +1875,7 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
                         open(overwrite_file, "w+", encoding="utf-8").write(
                             json.dumps(result, ensure_ascii=False)
                         )
+                        modfiles[relative_path] = overwrite_file
 
         def merge_regex_json_file():
             for source in self.merge_to_one_json:
@@ -1875,12 +1907,14 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
                 for relative_path in relative_paths:
                     file_path = self._get_overwrite_path() / relative_path
                     file_path.parent.mkdir(parents=True, exist_ok=True)
-                    file_path.touch()
+                    # file_path.touch()
+                    modfiles.pop(relative_path)
                     logger.debug(f"touch {file_path}")
                 open(overwrite_file, "w+", encoding="utf-8").write(
                     json.dumps(result, ensure_ascii=False)
                 )
                 logger.debug(f"merge regex json file {overwrite_file} Done")
+                modfiles[Path(source.file_name)] = overwrite_file
 
         def reorder_files():
             reorder_files_mapping: List[mobase.Mapping] = []
@@ -1890,7 +1924,7 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
             logger.debug("reordering file")
             for source in self.reorder_file_necessary:
                 all_regex_files: list[Path] = []
-                overwrite_files: list[Path] = []
+                # overwrite_files: list[Path] = []
                 for index, mod_title in enumerate(mod_titles):
                     regex_files = list(
                         (self._get_mo_mods_path() / mod_title).glob(source.regex)
@@ -1900,23 +1934,25 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
                         relative_path = file.relative_to(
                             self._get_mo_mods_path() / mod_title
                         )
-                        overwrite_file = self._get_overwrite_path() / relative_path
+                        modfiles.pop(relative_path)
+                        # overwrite_file = self._get_overwrite_path() / relative_path
                         mapping_file = (
                             self._get_game_path()
                             / Path(self.GameDataPath)
                             / relative_path
                         )
-                        overwrite_files.append(overwrite_file)
+                        # overwrite_files.append(overwrite_file)
                         new_mapping_file = mapping_file.parent / (
-                            f"{index:03d}" + overwrite_file.name
+                            f"{index:03d}" + relative_path.name
                         )
+                        modfiles[relative_path.parent / new_mapping_file.name] = file
                         reorder_files_mapping.append(
                             mobase.Mapping(str(file), str(new_mapping_file), False)
                         )
                         logger.debug(f"reordering {file} to {new_mapping_file}")
-                for overwrite_file in overwrite_files:
-                    overwrite_file.parent.mkdir(parents=True, exist_ok=True)
-                    overwrite_file.touch()
+                # for overwrite_file in overwrite_files:
+                #     overwrite_file.parent.mkdir(parents=True, exist_ok=True)
+                # overwrite_file.touch()
             return reorder_files_mapping
 
         def reorder_trinkets_rarity_files():
@@ -1927,14 +1963,28 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
                         "trinkets/*rarities.trinkets.json"
                     )
                 )
-            return util.merge_reorder_rarity(
+            for relative_path in set(
+                [i.relative_to(i.parent.parent) for i in rarity_files]
+            ):
+                modfiles.pop(relative_path)
+
+            mappings = util.merge_reorder_rarity(
                 rarity_files,
-                self._get_game_path() / Path(self.GameDataPath) / "trinkets",
+                self._get_mapping_mod_path() / "trinkets",
             )
+
+            for mapping in mappings:
+                relative_path = Path(mapping.destination).relative_to(
+                    self._get_mapping_mod_path()
+                )
+                modfiles[relative_path] = Path(mapping.source)
+
+            return mappings
 
         logger.debug("create_project_xml start...")
         create_project_xml()
         logger.debug("create_project_xml end")
+        gen_modfiles()
         logger.debug("merge_regex_json_file start...")
         merge_regex_json_file()
         logger.debug("merge_regex_json_file end")
@@ -1945,12 +1995,14 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
         merge_same_darkest_file()
         logger.debug("merge_regex_darkest_file end")
         # merge_effect_files()
-        return (
+        mappings = (
             preload_static_resource()
             + preload_dynamic_resource()
             + reorder_files()
             + reorder_trinkets_rarity_files()
         )
+        modfiles_txt()
+        return mappings
 
     def executables(self):
         if self.is_steam():
