@@ -1,5 +1,6 @@
 import json
 import logging
+import pickle
 import random
 import re
 import shutil
@@ -1682,14 +1683,49 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
 
         def modfiles_txt():  # generate modfiles.txt
             modfiles_path = self._get_overwrite_path() / "modfiles.txt"
-            logger.debug(f"{modfiles}")
+            modfiles_content = ""
+            cache_file = self._get_overwrite_path() / "cache" / "modfiles.txt.cache"
+            cache_file.parent.mkdir(parents=True, exist_ok=True)
+            cache: dict[str, tuple[int, int]] = {}
+            cache_changed = False
+            if cache_file.exists():
+                with open(cache_file, "rb") as f:
+                    cache = pickle.load(f)
+                logger.debug("modfiles.txt cache loaded")
+            for relative_path, real_path in modfiles.items():
+                relative_path = relative_path.as_posix()
+                real_mtime = int(real_path.stat().st_mtime)
+                if relative_path in cache:
+                    size, mtime = cache[relative_path]
+                    if mtime == real_mtime:
+                        modfiles_content += f"{relative_path} {size}\n"
+                    else:
+                        real_size = real_path.stat().st_size
+                        if real_size == size:
+                            continue
+                        cache_changed = True
+                        logger.debug(f"{relative_path} changed")
+                        cache[relative_path] = (real_size, real_mtime)
+                        modfiles_content += f"{relative_path} {real_mtime}\n"
+                else:
+                    cache_changed = True
+                    logger.debug(f"{relative_path} added")
+                    real_size = real_path.stat().st_size
+                    cache[relative_path] = (real_size, real_mtime)
+                    modfiles_content += f"{relative_path} {real_size}\n"
+            if cache_changed:
+                with open(cache_file, "wb") as f:
+                    pickle.dump(cache, f)
+                logger.debug("modfiles.txt cache updated")
+            modfiles_path.write_text(modfiles_content, encoding="utf-8")
             modfiles_path.write_text(
                 "\n".join(
                     sorted(
                         f"{k.as_posix()} {v.stat().st_size}"
                         for k, v in modfiles.items()
                     )
-                )
+                ),
+                encoding="utf-8",
             )
 
         def create_project_xml():  # merge mod xml
@@ -1984,7 +2020,9 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
         logger.debug("create_project_xml start...")
         create_project_xml()
         logger.debug("create_project_xml end")
+        logger.debug("gen_modfiles start...")
         gen_modfiles()
+        logger.debug("gen_modfiles end")
         logger.debug("merge_regex_json_file start...")
         merge_regex_json_file()
         logger.debug("merge_regex_json_file end")
@@ -1995,13 +2033,17 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
         merge_same_darkest_file()
         logger.debug("merge_regex_darkest_file end")
         # merge_effect_files()
+        logger.debug("mappings start...")
         mappings = (
             preload_static_resource()
             + preload_dynamic_resource()
             + reorder_files()
             + reorder_trinkets_rarity_files()
         )
+        logger.debug("mappings end")
+        logger.debug("modfiles_txt start...")
         modfiles_txt()
+        logger.debug("modfiles_txt end")
         return mappings
 
     def executables(self):
