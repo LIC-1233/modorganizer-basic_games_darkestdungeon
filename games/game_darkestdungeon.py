@@ -75,7 +75,8 @@ class util:
             except Exception as e:
                 logger.error(f"Error in {path}: {e}")
                 continue
-            result.update(result_temp)
+            for k, v in result_temp.items():
+                result[k].update(v)
 
         output: dict[str, list[dict[str, Any] | list[str]]] = {
             k: list(v.values()) for k, v in result.items()
