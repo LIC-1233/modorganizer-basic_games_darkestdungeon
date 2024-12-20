@@ -4,7 +4,7 @@ import random
 import re
 import shutil
 import struct
-from collections import defaultdict, deque
+from collections import defaultdict
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
@@ -38,16 +38,6 @@ class util:
         pass
 
     @staticmethod
-    def try_read_text(file_path: Path) -> str:
-        encodings_to_try = ["gbk", "utf-8", "iso-8859-1"]
-        for encoding in encodings_to_try:
-            try:
-                return file_path.read_text(encoding=encoding)
-            except UnicodeDecodeError:
-                continue
-        raise ValueError(f"Unable to decode {file_path} with known encodings.")
-
-    @staticmethod
     def smerge_jsons(
         paths: list[Path], identifier: list[str]
     ) -> dict[str, list[dict[str, Any] | list[str]]]:
@@ -56,7 +46,7 @@ class util:
             result_temp: dict[str, dict[tuple[str, ...], Any]] = defaultdict(dict)
             try:
                 dict1: dict[str, list[dict[str, Any] | list[str]] | dict[str, str]] = (
-                    json.loads(util.try_read_text(path))
+                    json.loads(path.read_text("utf-8", errors="ignore"))
                 )
                 for p_key, p_list in dict1.items():
                     if isinstance(p_list, list):
@@ -137,38 +127,6 @@ class util:
             return True
         except Exception:
             return False
-
-    @staticmethod
-    def topological_sort(projects: str, dependencies: dict[str, list[str] | set[str]]):
-        # 创建一个图的邻接表表示法
-        graph: dict[str, list[str]] = defaultdict(list)
-        # 记录每个节点的入度
-        in_degree = {project: 0 for project in projects}
-
-        # 填充图和入度表
-        for project, deps in dependencies.items():
-            for dep in deps:
-                graph[dep].append(project)
-                in_degree[project] += 1
-
-        # 初始化队列，添加所有入度为0的节点
-        queue = deque([project for project in projects if in_degree[project] == 0])
-        sorted_order: list[str] = []
-
-        while queue:
-            project = queue.popleft()
-            sorted_order.append(project)
-
-            for next_project in graph[project]:
-                in_degree[next_project] -= 1
-                if in_degree[next_project] == 0:
-                    queue.append(next_project)
-
-        if len(sorted_order) == len(projects):
-            return sorted_order
-        else:
-            # 如果存在循环依赖，则无法完成拓扑排序
-            raise ValueError("There is a cycle in the dependency graph.")
 
     @staticmethod
     def merge_reorder_rarity(files: list[Path], trinkets_path: Path):
@@ -1729,7 +1687,9 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
 
             for effect_file_name, files in effect_files.items():
                 if len(files) > 1:
-                    contents = "\n".join([util.try_read_text(i) for i in files])
+                    contents = "\n".join(
+                        [i.read_text(encoding="utf-8", errors="ignore") for i in files]
+                    )
                     open(
                         overwrite_effect_folder / f"{effect_file_name}",
                         "w+",
