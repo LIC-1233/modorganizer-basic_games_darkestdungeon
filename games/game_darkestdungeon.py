@@ -16,9 +16,13 @@ from xml.etree.ElementTree import Element
 import mobase
 import psutil
 import vdf  # type: ignore
-from PyQt6.QtCore import QDir, QFileInfo, QStandardPaths, Qt
+import watchdog
+import watchdog.events
+from PyQt6.QtCore import QDir, QFileInfo, QRunnable, QStandardPaths, Qt, QThreadPool
 from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from watchdog.events import FileSystemEvent, FileSystemEventHandler
+from watchdog.observers import Observer
 
 from ..basic_game import BasicGame, BasicGameSaveGame
 from ..steam_utils import find_games, find_steam_path, parse_library_info
@@ -34,9 +38,116 @@ class mergeFile_regex_data:
     file_name: str
 
 
+class ModfilesGen:
+    def __init__(self, g: "DarkestDungeonGame") -> None:
+        self.game = g
+        self.mod_path = self.game.get_game_path() / "mods"
+        self.modfiles: ModfilesGen.PathControl
+        self.thread_pool = QThreadPool()
+        self.thread_pool.setMaxThreadCount(1)
+        task = ModfilesGen.gen_modfiles(self)
+        self.thread_pool.start(task)
+
+    class PathControl:
+        def __init__(self, base_path: Path, pathdict: dict[str, Any]) -> None:
+            self.base_path: Path = base_path
+            self.pathdict: dict[str, Any] = pathdict
+
+        @staticmethod
+        def _pathdict_to_dict(file_dict: dict[str, Any], base_path: str = ""):
+            result: dict[str, int] = {}
+            for key, value in file_dict.items():
+                if base_path != "":
+                    path = "/".join([base_path, key])
+                else:
+                    path = key
+                if isinstance(value, dict):
+                    # 如果值是另一个字典，意味着这是一个子目录，递归处理
+                    result.update(
+                        ModfilesGen.PathControl._pathdict_to_dict(value, path)  # type: ignore
+                    )
+                else:
+                    # 否则，这是一个文件，添加到结果列表中
+                    result[path] = value
+            return result
+
+        def to_dict(self) -> dict[str, int]:
+            result: dict[str, int] = {}
+            for _mod_name, value in self.pathdict.items():
+                result.update(self._pathdict_to_dict(value))
+            return result
+
+        def delete_modfiles(self, path: Path | str) -> None:
+            path = Path(path)
+            d = self.pathdict
+            for key in path.parts:
+                d = d.setdefault(key, {})
+            d = {}
+
+        def update_modfiles(self, path: Path | str) -> None:
+            path = Path(path)
+            value = util.folder_to_dict(path)
+            d = self.pathdict
+            for key in path.parts:
+                d = d.setdefault(key, {})
+            d = value
+
+    class gen_modfiles(QRunnable):
+        def __init__(self, modfilesgen: "ModfilesGen") -> None:
+            self.modfilesgen = modfilesgen
+            self.mod_path = modfilesgen.mod_path
+
+        def run(self):
+            self.modfilesgen.modfiles = ModfilesGen.PathControl(
+                self.mod_path,
+                util.folder_to_dict(self.mod_path),  # type: ignore
+            )
+            event_handler = ModfilesGen.FileWatchDog(self.modfilesgen)
+            observer = Observer()
+            observer.daemon = True
+            observer.schedule(event_handler, str(self.mod_path), recursive=True)
+            observer.start()
+
+    class FileWatchDog(FileSystemEventHandler):
+        def __init__(self, modfilesgen: "ModfilesGen") -> None:
+            self.modfilesgen = modfilesgen
+
+        def on_any_event(self, event: FileSystemEvent) -> None:
+            event_type = event.event_type
+            src_path = str(event.src_path)
+            dest_path = str(event.dest_path)
+            if event_type == watchdog.events.EVENT_TYPE_MOVED:
+                logger.debug(f"File {src_path} moved to {dest_path}.")
+                self.modfilesgen.modfiles.delete_modfiles(src_path)
+                self.modfilesgen.modfiles.update_modfiles(dest_path)
+            if event_type == watchdog.events.EVENT_TYPE_CREATED:
+                logger.debug(f"File {src_path} created.")
+                self.modfilesgen.modfiles.update_modfiles(src_path)
+            if event_type == watchdog.events.EVENT_TYPE_DELETED:
+                logger.debug(f"File {src_path} deleted.")
+                self.modfilesgen.modfiles.delete_modfiles(src_path)
+            if event_type == watchdog.events.EVENT_TYPE_MODIFIED:
+                logger.debug(f"File {src_path} modified.")
+                self.modfilesgen.modfiles.update_modfiles(src_path)
+
+
 class util:
     def __init__(self):
         pass
+
+    @staticmethod
+    def folder_to_dict(path: str | Path):
+        content: dict[str, Any] = {}
+        path = Path(path)
+        if path.is_file():
+            return path.stat().st_size
+        else:
+            for entry in path.iterdir():
+                if entry.is_dir():
+                    content[entry.name] = util.folder_to_dict(entry)
+                else:
+                    content[entry.name] = entry.stat().st_size
+            return content
 
     @staticmethod
     def try_read_text(file_path: Path) -> str:
@@ -1385,11 +1496,11 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
     def _get_overwrite_path(self):
         return Path(self._organizer.overwritePath())
 
-    def _get_game_path(self):
+    def get_game_path(self):
         return Path(self.gameDirectory().absolutePath())
 
     def _get_mapping_mod_path(self):
-        return self._get_game_path() / self.GameDataPath
+        return self.get_game_path() / self.GameDataPath
 
     def _get_workshop_path(self):
         workshop_paths: list[Path] = []
@@ -1682,6 +1793,7 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
                 #                 modfiles[str(relative_path / entry.name)] = entry.stat().st_size
 
         def modfiles_txt():  # generate modfiles.txt
+            # TODO 考虑启动时子线程生成，然后用 watchdog 监控文件变化，实现实时更新
             modfiles_path = self._get_overwrite_path() / "modfiles.txt"
             modfiles_content = ""
             cache_file = self._get_overwrite_path() / "cache" / "modfiles.txt.cache"
@@ -1817,7 +1929,7 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
                     static_resource_mapping.append(
                         mobase.Mapping(
                             str(self._get_mo_mods_path() / mod_title / path),
-                            str(self._get_game_path() / path),
+                            str(self.get_game_path() / path),
                             True,
                             True,
                         )
@@ -1850,7 +1962,7 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
                                 mobase.Mapping(
                                     str(file.absolute()),
                                     str(
-                                        self._get_game_path()
+                                        self.get_game_path()
                                         / Path(self.GameDataPath)
                                         / relative_path
                                         / mapping_file_name
@@ -1973,7 +2085,7 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
                         modfiles.pop(relative_path)
                         # overwrite_file = self._get_overwrite_path() / relative_path
                         mapping_file = (
-                            self._get_game_path()
+                            self.get_game_path()
                             / Path(self.GameDataPath)
                             / relative_path
                         )
