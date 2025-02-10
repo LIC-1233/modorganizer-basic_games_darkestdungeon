@@ -1364,10 +1364,16 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
                     workshop_paths.append(
                         library_folder.path / "steamapps" / "workshop"
                     )
-        else:
+            return workshop_paths
+        elif "262060" in find_games():
             workshop_paths.append(find_games()["262060"].parent.parent / "workshop")
-        logger.debug(f"Found {len(workshop_paths)} workshop: {workshop_paths}")
-        return workshop_paths
+            logger.debug(f"Found {len(workshop_paths)} workshop: {workshop_paths}")
+            return workshop_paths
+        else:
+            logger.info(
+                f"darkest_dungeon acf file not exist in {self._get_game_path()}"
+            )
+            return workshop_paths
 
     def _get_mo_mods_path(self):
         return Path(self._organizer.modsPath())
