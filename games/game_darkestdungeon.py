@@ -1176,7 +1176,7 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
     GameNexusId = 804
     GameSteamId = 262060
     GameGogId = 1719198803
-    GameBinary = "_windowsnosteam//darkest.exe"
+    GameBinary = "_windowsnosteam/win64/darkest.exe"
     GameDataPath = r"mods\!!MOD"
     GameSupportURL = (
         r"https://github.com/ModOrganizer2/modorganizer-basic_games/wiki/"
@@ -1921,9 +1921,9 @@ class DarkestDungeonGame(BasicGame, mobase.IPluginFileMapper):
 
     def executables(self):
         if self.is_steam():
-            path = QFileInfo(self.gameDirectory(), "_windows/darkest.exe")
+            path = QFileInfo(self.gameDirectory(), "_windows/win64/darkest.exe")
         else:
-            path = QFileInfo(self.gameDirectory(), "_windowsnosteam/darkest.exe")
+            path = QFileInfo(self.gameDirectory(), "_windowsnosteam/win64/darkest.exe")
         return [
             mobase.ExecutableInfo("Darkest Dungeon", path).withWorkingDirectory(
                 self.gameDirectory()
